@@ -908,9 +908,11 @@ app.post("/api/render", async (req, res) => {
   let sessionDirForCleanup = null;
 
   try {
-    const { filename, sessionId, subtitles } = req.body;
+    const { filename, sessionId, subtitles, mode, useExistingOutput } = req.body;
+    const renderMode = mode || "save";
 
     log("[render] 요청 수신");
+    log("[render] mode:", renderMode);
     log("[render] sessionId:", sessionId || "(direct upload)");
     log("[render] filename:", filename || "(external mode)");
     log(
@@ -966,7 +968,7 @@ app.post("/api/render", async (req, res) => {
 
       writeMeta(sessionDir, {
         ...externalMeta,
-        status: "rendering",
+        status: renderMode === "preview" ? "preview_rendering" : "saving",
         renderingStartedAt: new Date().toISOString()
       });
     } else {
@@ -997,57 +999,81 @@ app.post("/api/render", async (req, res) => {
     log("[render] outputPath:", outputPath);
     log("[render] preset/crf:", RENDER_PRESET, RENDER_CRF);
 
-    const assContent = createAssSubtitle(subtitles);
-    fs.writeFileSync(subtitlePath, assContent, "utf8");
+    const shouldRunFfmpeg = !(
+      renderMode === "save" &&
+      useExistingOutput &&
+      fs.existsSync(outputPath)
+    );
 
-    const subtitleForFfmpeg = escapeFfmpegFilterPath(subtitlePath);
-    const fontsDirForFfmpeg = escapeFfmpegFilterPath(FONT_DIR);
+    if (shouldRunFfmpeg) {
+      const assContent = createAssSubtitle(subtitles);
+      fs.writeFileSync(subtitlePath, assContent, "utf8");
 
-    const videoFilter = [
-      `scale=${EDITOR_WIDTH}:${EDITOR_HEIGHT}:force_original_aspect_ratio=increase`,
-      `crop=${EDITOR_WIDTH}:${EDITOR_HEIGHT}`,
-      `ass='${subtitleForFfmpeg}':fontsdir='${fontsDirForFfmpeg}'`,
-      `scale=${OUTPUT_WIDTH}:${OUTPUT_HEIGHT}`
-    ].join(",");
+      const subtitleForFfmpeg = escapeFfmpegFilterPath(subtitlePath);
+      const fontsDirForFfmpeg = escapeFfmpegFilterPath(FONT_DIR);
 
-    const args = [
-      "-y",
-      "-i",
-      inputPath,
-      "-vf",
-      videoFilter,
-      "-c:v",
-      "libx264",
-      "-preset",
-      RENDER_PRESET,
-      "-crf",
-      String(RENDER_CRF),
-      "-pix_fmt",
-      "yuv420p",
-      "-c:a",
-      "aac",
-      "-b:a",
-      "192k",
-      "-movflags",
-      "+faststart",
-      outputPath
-    ];
+      const videoFilter = [
+        `scale=${EDITOR_WIDTH}:${EDITOR_HEIGHT}:force_original_aspect_ratio=increase`,
+        `crop=${EDITOR_WIDTH}:${EDITOR_HEIGHT}`,
+        `ass='${subtitleForFfmpeg}':fontsdir='${fontsDirForFfmpeg}'`,
+        `scale=${OUTPUT_WIDTH}:${OUTPUT_HEIGHT}`
+      ].join(",");
 
-    log("[render] FFmpeg 시작");
-    console.time("[render] ffmpeg");
+      const args = [
+        "-y",
+        "-i",
+        inputPath,
+        "-vf",
+        videoFilter,
+        "-c:v",
+        "libx264",
+        "-preset",
+        RENDER_PRESET,
+        "-crf",
+        String(RENDER_CRF),
+        "-pix_fmt",
+        "yuv420p",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "192k",
+        "-movflags",
+        "+faststart",
+        outputPath
+      ];
 
-    await runFfmpeg(args);
+      log("[render] FFmpeg 시작");
+      console.time("[render] ffmpeg");
 
-    console.timeEnd("[render] ffmpeg");
-    log("[render] FFmpeg 완료");
+      await runFfmpeg(args);
 
-    let callbackResult = null;
+      console.timeEnd("[render] ffmpeg");
+      log("[render] FFmpeg 완료");
+    } else {
+      log("[render] 기존 rendered.mp4 사용:", outputPath);
+    }
 
     if (isExternalMode) {
+      outputUrl = `${getPublicBaseUrl(req)}/uploads/external/${sessionId}/output/${outputFilename}?t=${Date.now()}`;
+
+      if (renderMode === "preview") {
+        console.timeEnd("[render] total");
+
+        return res.json({
+          message: "결과 미리보기 생성 완료",
+          sessionId,
+          jobId: externalMeta.jobId,
+          externalMode: true,
+          previewOnly: true,
+          outputUrl,
+          shouldClose: false
+        });
+      }
+
       log("[render] callback 시작:", externalMeta.callbackUrl || "(empty)");
       console.time("[render] callback");
 
-      callbackResult = await pushRenderedVideoToCallback({
+      const callbackResult = await pushRenderedVideoToCallback({
         callbackUrl: externalMeta.callbackUrl,
         jobId: externalMeta.jobId,
         sessionId,
@@ -1066,8 +1092,8 @@ app.post("/api/render", async (req, res) => {
 
       return res.json({
         message: callbackResult.skipped
-          ? "자막 합성 완료. callbackUrl이 없어 임시 파일은 유지되었습니다."
-          : "자막 합성 완료. Hilite로 결과 전송 후 임시 파일을 삭제했습니다.",
+          ? "저장할 callbackUrl이 없어 전송을 생략했습니다."
+          : "저장 완료. 원본 시스템으로 결과 영상을 전송했습니다.",
         sessionId,
         jobId: externalMeta.jobId,
         externalMode: true,
@@ -1081,10 +1107,11 @@ app.post("/api/render", async (req, res) => {
     console.timeEnd("[render] total");
 
     res.json({
-      message: "자막 합성 완료",
+      message: "결과 미리보기 생성 완료",
       outputFilename,
       outputUrl,
-      externalMode: false
+      externalMode: false,
+      previewOnly: renderMode === "preview"
     });
   } catch (error) {
     console.timeEnd("[render] total");

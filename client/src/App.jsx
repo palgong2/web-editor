@@ -7,7 +7,7 @@ function App() {
   const videoBoxRef = useRef(null);
   const editTextAreaRef = useRef(null);
 
-  const [message, setMessage] = useState("영상을 업로드해 주세요.");
+  const [message, setMessage] = useState("");
   const [selectedFile, setSelectedFile] = useState(null);
   const [videoUrl, setVideoUrl] = useState("");
   const [filename, setFilename] = useState("");
@@ -17,6 +17,7 @@ function App() {
   const [jobId, setJobId] = useState("");
 
   const [rendering, setRendering] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [outputUrl, setOutputUrl] = useState("");
 
   const [currentTime, setCurrentTime] = useState(0);
@@ -172,7 +173,7 @@ function App() {
       setEditingText("");
       clearPropertyPanel();
 
-      setMessage("외부 편집 세션을 불러왔습니다.");
+      setMessage("");
     } catch (error) {
       console.error(error);
       setMessage("외부 편집 세션 요청 실패");
@@ -276,7 +277,7 @@ function App() {
       endTime: Number((currentTime + 3).toFixed(3)),
       fontSize: 32,
       textAlign: "center",
-      fontFamily: "Malgun Gothic",
+      fontFamily: "Noto Sans KR",
       color: "#ffffff",
       bold: true,
       italic: false
@@ -725,21 +726,7 @@ function App() {
     });
   };
 
-  const showSubtitleData = () => {
-    const renderSubtitles = getSubtitlesForRender();
-
-    console.log({
-      filename,
-      sessionId,
-      jobId,
-      externalMode,
-      subtitles: renderSubtitles
-    });
-
-    setMessage("현재 자막 데이터가 콘솔에 출력되었습니다.");
-  };
-
-  const renderVideo = async () => {
+  const previewVideo = async () => {
     const renderSubtitles = getSubtitlesForRender();
 
     if (!externalMode && !filename) {
@@ -760,11 +747,7 @@ function App() {
     try {
       setRendering(true);
       setOutputUrl("");
-      setMessage(
-        externalMode
-          ? "영상 렌더링 후 원본 시스템으로 전송 중입니다."
-          : "영상 렌더링 중입니다."
-      );
+      setMessage("결과 미리보기를 생성하는 중입니다.");
 
       const response = await fetch(`${API_BASE_URL}/api/render`, {
         method: "POST",
@@ -772,6 +755,7 @@ function App() {
           "Content-Type": "application/json"
         },
         body: JSON.stringify({
+          mode: "preview",
           filename: externalMode ? undefined : filename,
           sessionId: externalMode ? sessionId : undefined,
           subtitles: renderSubtitles
@@ -782,29 +766,75 @@ function App() {
 
       if (!response.ok) {
         console.error(data);
-        setMessage(data.message || "렌더링 실패");
-        return;
-      }
-
-      if (externalMode) {
-        setMessage(data.message || "저장 완료");
-
-        if (data.shouldClose) {
-          setTimeout(() => {
-            window.close();
-          }, 800);
-        }
-
+        setMessage(data.message || "결과 미리보기 생성 실패");
         return;
       }
 
       setOutputUrl(data.outputUrl);
-      setMessage(data.message);
+      setMessage("결과 미리보기가 생성되었습니다.");
     } catch (error) {
       console.error(error);
-      setMessage("렌더링 요청 실패");
+      setMessage("결과 미리보기 요청 실패");
     } finally {
       setRendering(false);
+    }
+  };
+
+  const saveFinalVideo = async () => {
+    const renderSubtitles = getSubtitlesForRender();
+
+    if (!externalMode) {
+      setMessage("직접 업로드 모드에서는 결과 영상을 다운로드해서 사용하세요.");
+      return;
+    }
+
+    if (!sessionId) {
+      setMessage("외부 편집 세션이 없습니다.");
+      return;
+    }
+
+    if (!outputUrl) {
+      setMessage("먼저 결과 미리보기를 생성해 주세요.");
+      return;
+    }
+
+    try {
+      setSaving(true);
+      setMessage("원본 시스템으로 저장 중입니다.");
+
+      const response = await fetch(`${API_BASE_URL}/api/render`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          mode: "save",
+          useExistingOutput: true,
+          sessionId,
+          subtitles: renderSubtitles
+        })
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        console.error(data);
+        setMessage(data.message || "저장 실패");
+        return;
+      }
+
+      setMessage(data.message || "저장 완료");
+
+      if (data.shouldClose) {
+        setTimeout(() => {
+          window.close();
+        }, 800);
+      }
+    } catch (error) {
+      console.error(error);
+      setMessage("저장 요청 실패");
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -823,498 +853,459 @@ function App() {
             event.currentTarget.blur();
           }
         }}
-        style={{
-          width: "80px",
-          padding: "6px"
-        }}
+        style={styles.input}
       />
     );
   };
 
-  return (
-    <div style={{ padding: "40px", fontFamily: "Malgun Gothic" }}>
-      <h1>웹 기반 자막 편집기</h1>
-
-      <p>{message}</p>
-
-      {externalMode && (
-        <div
-          style={{
-            border: "1px solid #ddd",
-            padding: "10px",
-            marginBottom: "20px",
-            backgroundColor: "#f7f7f7"
-          }}
-        >
-          <strong>외부 편집 모드</strong>
-          <div style={{ fontSize: "13px", marginTop: "6px" }}>
-            sessionId: {sessionId}
-          </div>
-          <div style={{ fontSize: "13px" }}>jobId: {jobId}</div>
-          <div style={{ fontSize: "13px", marginTop: "6px" }}>
-            저장을 누르면 결과 영상이 원본 시스템으로 전송되고, 성공 시 창이
-            닫힙니다.
-          </div>
-        </div>
-      )}
-
-      {!externalMode && (
-        <>
-          <input type="file" accept="video/mp4" onChange={handleFileChange} />
-
-          <br />
-          <br />
-
-          <button onClick={uploadVideo}>영상 업로드</button>
-        </>
-      )}
-
-      {videoUrl && (
-        <div style={{ marginTop: "30px" }}>
-          <h2>9:16 영상 미리보기</h2>
-
-          <button onClick={addSubtitle}>+ 자막 추가</button>
-
-          <button
-            onClick={renderVideo}
-            disabled={rendering}
-            style={{ marginLeft: "10px" }}
-          >
-            {rendering
-              ? externalMode
-                ? "저장 및 전송 중..."
-                : "렌더링 중..."
-              : externalMode
-              ? "저장 후 원본 시스템으로 전송"
-              : "저장 / 자막 합성"}
-          </button>
-
-          <button onClick={showSubtitleData} style={{ marginLeft: "10px" }}>
-            자막 데이터 확인
-          </button>
-
-          <p style={{ fontSize: "13px", color: "#555" }}>
-            현재 시간: {currentTime.toFixed(1)}초
-          </p>
-
-          <p style={{ fontSize: "13px", color: "#555" }}>
-            입력과 출력은 9:16 고정입니다. 편집 기준은 360×640, 출력 기준은
-            720×1280입니다.
-          </p>
-
-          <div
-            ref={videoBoxRef}
-            onMouseMove={handleMouseMove}
-            onMouseUp={handleMouseUp}
-            onMouseLeave={handleMouseUp}
-            onClick={() => {
-              setEditingSubtitleId(null);
-              setSelectedSubtitleId(null);
-              clearPropertyPanel();
-            }}
-            style={{
-              position: "relative",
-              width: `${EDITOR_WIDTH}px`,
-              height: `${EDITOR_HEIGHT}px`,
-              marginTop: "20px",
-              border: "1px solid #ccc",
-              userSelect: "none",
-              overflow: "hidden",
-              backgroundColor: "black"
-            }}
-          >
-            <video
-              src={videoUrl}
-              controls
-              width={EDITOR_WIDTH}
-              height={EDITOR_HEIGHT}
-              onTimeUpdate={(event) => {
-                setCurrentTime(event.currentTarget.currentTime);
-              }}
-              onPlay={() => {
-                setIsPlaying(true);
-              }}
-              onPause={() => {
-                setIsPlaying(false);
-              }}
-              onEnded={() => {
-                setIsPlaying(false);
-              }}
-              style={{
-                display: "block",
-                width: `${EDITOR_WIDTH}px`,
-                height: `${EDITOR_HEIGHT}px`,
-                objectFit: "cover"
-              }}
-            />
-
-            {subtitles.map((subtitle) => {
-              const isSelected = subtitle.id === selectedSubtitleId;
-              const isEditing = subtitle.id === editingSubtitleId;
-              const displayText = isEditing ? editingText : subtitle.text;
-
-              const subtitleStartTime = Number(subtitle.startTime);
-              const subtitleEndTime = Number(subtitle.endTime);
-
-              const isInTimeRange =
-                currentTime >= subtitleStartTime &&
-                currentTime <= subtitleEndTime;
-
-              const shouldShowSubtitle =
-                isInTimeRange || (!isPlaying && isSelected) || isEditing;
-
-              if (!shouldShowSubtitle) {
-                return null;
-              }
-
-              return (
-                <div
-                  key={subtitle.id}
-                  onMouseDown={(event) =>
-                    handleSubtitleMouseDown(event, subtitle)
-                  }
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    setSelectedSubtitleId(subtitle.id);
-                    syncPropertyPanel(subtitle);
-                  }}
-                  onDoubleClick={(event) => {
-                    event.stopPropagation();
-                    startTextEdit(subtitle);
-                  }}
-                  style={{
-                    position: "absolute",
-                    left: `${subtitle.x}px`,
-                    top: `${subtitle.y}px`,
-                    width: `${subtitle.width}px`,
-                    height: `${subtitle.height}px`,
-                    border: isSelected
-                      ? "2px solid yellow"
-                      : "1px dashed transparent",
-                    backgroundColor: isSelected
-                      ? "rgba(0, 0, 0, 0.22)"
-                      : "transparent",
-                    boxSizing: "border-box",
-                    cursor: isEditing ? "text" : "move"
-                  }}
-                >
-                  {isEditing ? (
-                    <textarea
-                      ref={editTextAreaRef}
-                      value={editingText}
-                      onChange={(event) => setEditingText(event.target.value)}
-                      onClick={(event) => event.stopPropagation()}
-                      onMouseDown={(event) => event.stopPropagation()}
-                      onBlur={() => {
-                        const nextSubtitle = {
-                          ...subtitle,
-                          text: editingText
-                        };
-
-                        const nextFontSize = getAutoFitFontSize(
-                          nextSubtitle,
-                          subtitle.width,
-                          subtitle.height
-                        );
-
-                        updateSubtitleWithLimit(subtitle.id, {
-                          text: editingText,
-                          fontSize: nextFontSize
-                        });
-
-                        setPropertyText(editingText);
-                        setEditingSubtitleId(null);
-                      }}
-                      onKeyDown={(event) => {
-                        if (event.key === "Escape") {
-                          event.currentTarget.blur();
-
-                          const nextSubtitle = {
-                            ...subtitle,
-                            text: editingText
-                          };
-
-                          const nextFontSize = getAutoFitFontSize(
-                            nextSubtitle,
-                            subtitle.width,
-                            subtitle.height
-                          );
-
-                          updateSubtitleWithLimit(subtitle.id, {
-                            text: editingText,
-                            fontSize: nextFontSize
-                          });
-
-                          setSelectedSubtitleId(null);
-                          clearPropertyPanel();
-                        }
-                      }}
-                      spellCheck={false}
-                      style={{
-                        width: "100%",
-                        height: "100%",
-                        border: "none",
-                        outline: "1px solid white",
-                        resize: "none",
-                        overflow: "hidden",
-                        backgroundColor: "transparent",
-                        color: subtitle.color || "#ffffff",
-                        fontSize: `${subtitle.fontSize}px`,
-                        fontWeight: subtitle.bold ? "bold" : "normal",
-                        fontStyle: subtitle.italic ? "italic" : "normal",
-                        textAlign: subtitle.textAlign,
-                        textShadow: "none",
-                        boxSizing: "border-box",
-                        padding: "4px",
-                        fontFamily: subtitle.fontFamily || "Malgun Gothic",
-                        lineHeight: "1.2",
-                        whiteSpace: "pre-wrap",
-                        wordBreak: "break-word",
-                        cursor: "text"
-                      }}
-                    />
-                  ) : (
-                    <div
-                      style={{
-                        width: "100%",
-                        height: "100%",
-                        color: subtitle.color || "#ffffff",
-                        fontSize: `${subtitle.fontSize}px`,
-                        fontWeight: subtitle.bold ? "bold" : "normal",
-                        fontStyle: subtitle.italic ? "italic" : "normal",
-                        textAlign: subtitle.textAlign,
-                        textShadow: "none",
-                        boxSizing: "border-box",
-                        padding: "4px",
-                        fontFamily: subtitle.fontFamily || "Malgun Gothic",
-                        lineHeight: "1.2",
-                        whiteSpace: "pre-wrap",
-                        wordBreak: "break-word",
-                        overflow: "hidden",
-                        pointerEvents: "none"
-                      }}
-                    >
-                      {displayText}
-                    </div>
-                  )}
-
-                  {isSelected && !isEditing && (
-                    <>
-                      <div
-                        data-resize-handle="true"
-                        onMouseDown={(event) =>
-                          handleResizeMouseDown(event, subtitle, "right")
-                        }
-                        style={{
-                          position: "absolute",
-                          right: "-5px",
-                          top: "0",
-                          width: "10px",
-                          height: "100%",
-                          cursor: "ew-resize",
-                          backgroundColor: "rgba(255, 255, 0, 0.35)"
-                        }}
-                      />
-
-                      <div
-                        data-resize-handle="true"
-                        onMouseDown={(event) =>
-                          handleResizeMouseDown(event, subtitle, "bottom")
-                        }
-                        style={{
-                          position: "absolute",
-                          left: "0",
-                          bottom: "-5px",
-                          width: "100%",
-                          height: "10px",
-                          cursor: "ns-resize",
-                          backgroundColor: "rgba(255, 255, 0, 0.35)"
-                        }}
-                      />
-
-                      <div
-                        data-resize-handle="true"
-                        onMouseDown={(event) =>
-                          handleResizeMouseDown(event, subtitle, "corner")
-                        }
-                        style={{
-                          position: "absolute",
-                          right: "-7px",
-                          bottom: "-7px",
-                          width: "14px",
-                          height: "14px",
-                          backgroundColor: "yellow",
-                          border: "1px solid black",
-                          cursor: "nwse-resize",
-                          zIndex: 10
-                        }}
-                      />
-                    </>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-
-          {outputUrl && (
-            <div style={{ marginTop: "30px" }}>
-              <h3>결과 영상 720×1280</h3>
-
-              <video src={outputUrl} controls width="360" height="640" />
-
-              <div style={{ marginTop: "10px" }}>
-                <a href={outputUrl} download>
-                  결과 영상 다운로드
-                </a>
+  const renderVideoCanvas = () => {
+    if (!videoUrl) {
+      return (
+        <div style={styles.emptyVideo}>
+          {!externalMode && (
+            <div>
+              <div style={styles.emptyTitle}>MP4 영상을 업로드하세요</div>
+              <div style={styles.uploadRow}>
+                <input type="file" accept="video/mp4" onChange={handleFileChange} />
+                <button style={styles.primaryButton} onClick={uploadVideo}>
+                  영상 업로드
+                </button>
               </div>
             </div>
           )}
 
-          <div style={{ marginTop: "30px" }}>
-            <h3>선택된 자막 속성</h3>
+          {externalMode && (
+            <div style={styles.emptyTitle}>편집 세션을 불러오는 중입니다.</div>
+          )}
+        </div>
+      );
+    }
+
+    return (
+      <div
+        ref={videoBoxRef}
+        onMouseMove={handleMouseMove}
+        onMouseUp={handleMouseUp}
+        onMouseLeave={handleMouseUp}
+        onClick={() => {
+          setEditingSubtitleId(null);
+          setSelectedSubtitleId(null);
+          clearPropertyPanel();
+        }}
+        style={styles.videoBox}
+      >
+        <video
+          src={videoUrl}
+          controls
+          width={EDITOR_WIDTH}
+          height={EDITOR_HEIGHT}
+          onTimeUpdate={(event) => {
+            setCurrentTime(event.currentTarget.currentTime);
+          }}
+          onPlay={() => {
+            setIsPlaying(true);
+          }}
+          onPause={() => {
+            setIsPlaying(false);
+          }}
+          onEnded={() => {
+            setIsPlaying(false);
+          }}
+          style={styles.video}
+        />
+
+        {subtitles.map((subtitle) => {
+          const isSelected = subtitle.id === selectedSubtitleId;
+          const isEditing = subtitle.id === editingSubtitleId;
+          const displayText = isEditing ? editingText : subtitle.text;
+
+          const subtitleStartTime = Number(subtitle.startTime);
+          const subtitleEndTime = Number(subtitle.endTime);
+
+          const isInTimeRange =
+            currentTime >= subtitleStartTime && currentTime <= subtitleEndTime;
+
+          const shouldShowSubtitle =
+            isInTimeRange || (!isPlaying && isSelected) || isEditing;
+
+          if (!shouldShowSubtitle) {
+            return null;
+          }
+
+          return (
+            <div
+              key={subtitle.id}
+              onMouseDown={(event) => handleSubtitleMouseDown(event, subtitle)}
+              onClick={(event) => {
+                event.stopPropagation();
+                setSelectedSubtitleId(subtitle.id);
+                syncPropertyPanel(subtitle);
+              }}
+              onDoubleClick={(event) => {
+                event.stopPropagation();
+                startTextEdit(subtitle);
+              }}
+              style={{
+                ...styles.subtitleBox,
+                left: `${subtitle.x}px`,
+                top: `${subtitle.y}px`,
+                width: `${subtitle.width}px`,
+                height: `${subtitle.height}px`,
+                border: isSelected
+                  ? "2px solid #38bdf8"
+                  : "1px dashed transparent",
+                backgroundColor: isSelected
+                  ? "rgba(56, 189, 248, 0.12)"
+                  : "transparent",
+                cursor: isEditing ? "text" : "move"
+              }}
+            >
+              {isEditing ? (
+                <textarea
+                  ref={editTextAreaRef}
+                  value={editingText}
+                  onChange={(event) => setEditingText(event.target.value)}
+                  onClick={(event) => event.stopPropagation()}
+                  onMouseDown={(event) => event.stopPropagation()}
+                  onBlur={() => {
+                    const nextSubtitle = {
+                      ...subtitle,
+                      text: editingText
+                    };
+
+                    const nextFontSize = getAutoFitFontSize(
+                      nextSubtitle,
+                      subtitle.width,
+                      subtitle.height
+                    );
+
+                    updateSubtitleWithLimit(subtitle.id, {
+                      text: editingText,
+                      fontSize: nextFontSize
+                    });
+
+                    setPropertyText(editingText);
+                    setEditingSubtitleId(null);
+                  }}
+                  spellCheck={false}
+                  style={{
+                    ...styles.subtitleTextArea,
+                    color: subtitle.color || "#ffffff",
+                    fontSize: `${subtitle.fontSize}px`,
+                    fontWeight: subtitle.bold ? "bold" : "normal",
+                    fontStyle: subtitle.italic ? "italic" : "normal",
+                    textAlign: subtitle.textAlign,
+                    fontFamily: subtitle.fontFamily || "Noto Sans KR"
+                  }}
+                />
+              ) : (
+                <div
+                  style={{
+                    ...styles.subtitleText,
+                    color: subtitle.color || "#ffffff",
+                    fontSize: `${subtitle.fontSize}px`,
+                    fontWeight: subtitle.bold ? "bold" : "normal",
+                    fontStyle: subtitle.italic ? "italic" : "normal",
+                    textAlign: subtitle.textAlign,
+                    fontFamily: subtitle.fontFamily || "Noto Sans KR"
+                  }}
+                >
+                  {displayText}
+                </div>
+              )}
+
+              {isSelected && !isEditing && (
+                <>
+                  <div
+                    data-resize-handle="true"
+                    onMouseDown={(event) =>
+                      handleResizeMouseDown(event, subtitle, "right")
+                    }
+                    style={styles.resizeRight}
+                  />
+                  <div
+                    data-resize-handle="true"
+                    onMouseDown={(event) =>
+                      handleResizeMouseDown(event, subtitle, "bottom")
+                    }
+                    style={styles.resizeBottom}
+                  />
+                  <div
+                    data-resize-handle="true"
+                    onMouseDown={(event) =>
+                      handleResizeMouseDown(event, subtitle, "corner")
+                    }
+                    style={styles.resizeCorner}
+                  />
+                </>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
+  return (
+    <div style={styles.page}>
+      <main style={styles.layout}>
+        <section style={styles.leftPanel}>
+          <div style={styles.topBar}>
+            <div>
+              <div style={styles.projectTitle}>Caption Editor</div>
+              <div style={styles.projectMeta}>
+                {externalMode ? `JOB ${jobId || "-"}` : "Direct Upload Mode"} ·{" "}
+                {currentTime.toFixed(1)}s
+              </div>
+            </div>
+
+            <button
+              onClick={previewVideo}
+              disabled={rendering || !videoUrl}
+              style={{
+                ...styles.primaryButton,
+                opacity: rendering || !videoUrl ? 0.55 : 1
+              }}
+            >
+              {rendering ? "미리보기 생성 중..." : "결과 미리보기"}
+            </button>
+          </div>
+
+          {message && <div style={styles.message}>{message}</div>}
+
+          <div style={styles.videoArea}>{renderVideoCanvas()}</div>
+
+          <div style={styles.previewPanel}>
+            <div style={styles.sectionHeader}>
+              <span>결과 미리보기</span>
+              <span style={styles.mutedText}>720×1280 출력 기준</span>
+            </div>
+
+            {!outputUrl && (
+              <div style={styles.outputEmpty}>
+                결과 미리보기를 생성하면 이 영역에 영상이 표시됩니다.
+              </div>
+            )}
+
+            {outputUrl && (
+              <div style={styles.outputWrap}>
+                <video src={outputUrl} controls style={styles.outputVideo} />
+
+                <div style={styles.saveArea}>
+                  {externalMode ? (
+                    <button
+                      onClick={saveFinalVideo}
+                      disabled={saving}
+                      style={{
+                        ...styles.saveButton,
+                        opacity: saving ? 0.55 : 1
+                      }}
+                    >
+                      {saving ? "저장 중..." : "저장"}
+                    </button>
+                  ) : (
+                    <a href={outputUrl} download style={styles.downloadButton}>
+                      결과 영상 다운로드
+                    </a>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        </section>
+
+        <aside style={styles.rightPanel}>
+          <section style={styles.subtitleListPanel}>
+            <div style={styles.sideHeader}>
+              <div>
+                <div style={styles.sideTitle}>자막 목록</div>
+                <div style={styles.sideSubTitle}>{subtitles.length}개</div>
+              </div>
+
+              <button
+                onClick={addSubtitle}
+                disabled={!videoUrl}
+                style={styles.smallButton}
+              >
+                + 자막 추가
+              </button>
+            </div>
+
+            <div style={styles.subtitleList}>
+              {subtitles.length === 0 && (
+                <div style={styles.emptySideText}>자막이 없습니다.</div>
+              )}
+
+              {subtitles.map((subtitle, index) => (
+                <button
+                  key={subtitle.id}
+                  onClick={() => {
+                    setSelectedSubtitleId(subtitle.id);
+                    setEditingSubtitleId(null);
+                    syncPropertyPanel(subtitle);
+                  }}
+                  style={{
+                    ...styles.subtitleItem,
+                    borderColor:
+                      subtitle.id === selectedSubtitleId ? "#38bdf8" : "#1f2937",
+                    backgroundColor:
+                      subtitle.id === selectedSubtitleId ? "#0f2f44" : "#111827"
+                  }}
+                >
+                  <div style={styles.subtitleItemTop}>
+                    <span>#{index + 1}</span>
+                    <span>
+                      {subtitle.startTime}s - {subtitle.endTime}s
+                    </span>
+                  </div>
+                  <div style={styles.subtitleItemText}>{subtitle.text}</div>
+                </button>
+              ))}
+            </div>
+          </section>
+
+          <section style={styles.editorPanel}>
+            <div style={styles.sideHeader}>
+              <div>
+                <div style={styles.sideTitle}>자막 편집</div>
+                <div style={styles.sideSubTitle}>
+                  {selectedSubtitle ? "선택된 자막 속성" : "자막을 선택하세요"}
+                </div>
+              </div>
+            </div>
 
             {!selectedSubtitle && (
-              <p>영상 위의 자막을 클릭하면 속성을 수정할 수 있습니다.</p>
+              <div style={styles.emptySideText}>
+                오른쪽 위 목록에서 자막을 선택하면 편집 항목이 표시됩니다.
+              </div>
             )}
 
             {selectedSubtitle && (
-              <div
-                style={{
-                  border: "1px solid #ddd",
-                  padding: "12px",
-                  width: "600px"
-                }}
-              >
-                <div>
-                  <label>내용: </label>
-                  <input
-                    type="text"
-                    value={propertyText}
-                    onChange={(event) => setPropertyText(event.target.value)}
-                    onBlur={commitPropertyText}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter") {
-                        commitPropertyText();
-                        event.currentTarget.blur();
-                      }
-                    }}
-                    style={{ width: "400px", padding: "6px" }}
-                  />
+              <div style={styles.form}>
+                <label style={styles.label}>내용</label>
+                <textarea
+                  value={propertyText}
+                  onChange={(event) => setPropertyText(event.target.value)}
+                  onBlur={commitPropertyText}
+                  style={styles.propertyTextarea}
+                />
+
+                <div style={styles.formGrid}>
+                  <div>
+                    <label style={styles.label}>X</label>
+                    {renderNumberInput("x")}
+                  </div>
+                  <div>
+                    <label style={styles.label}>Y</label>
+                    {renderNumberInput("y")}
+                  </div>
+                  <div>
+                    <label style={styles.label}>너비</label>
+                    {renderNumberInput("width")}
+                  </div>
+                  <div>
+                    <label style={styles.label}>높이</label>
+                    {renderNumberInput("height")}
+                  </div>
+                  <div>
+                    <label style={styles.label}>시작</label>
+                    {renderNumberInput("startTime")}
+                  </div>
+                  <div>
+                    <label style={styles.label}>종료</label>
+                    {renderNumberInput("endTime")}
+                  </div>
                 </div>
 
-                <div style={{ marginTop: "10px" }}>
-                  <label>비디오 기준 정렬: </label>
+                <label style={styles.label}>글자 크기</label>
+                <div style={styles.inlineRow}>
+                  <button
+                    onClick={() => changeFontSize(selectedSubtitle.id, -4)}
+                    style={styles.secondaryButton}
+                  >
+                    작게
+                  </button>
+                  {renderNumberInput("fontSize")}
+                  <button
+                    onClick={() => changeFontSize(selectedSubtitle.id, 4)}
+                    style={styles.secondaryButton}
+                  >
+                    크게
+                  </button>
+                </div>
 
+                <label style={styles.label}>비디오 기준 정렬</label>
+                <div style={styles.inlineRow}>
                   <button
                     onClick={() =>
                       alignSubtitleToVideo(selectedSubtitle.id, "left")
                     }
-                    style={{ marginLeft: "8px" }}
+                    style={styles.secondaryButton}
                   >
                     왼쪽
                   </button>
-
                   <button
                     onClick={() =>
                       alignSubtitleToVideo(selectedSubtitle.id, "center")
                     }
-                    style={{ marginLeft: "8px" }}
+                    style={styles.secondaryButton}
                   >
                     가운데
                   </button>
-
                   <button
                     onClick={() =>
                       alignSubtitleToVideo(selectedSubtitle.id, "right")
                     }
-                    style={{ marginLeft: "8px" }}
+                    style={styles.secondaryButton}
                   >
                     오른쪽
                   </button>
                 </div>
 
-                <div style={{ marginTop: "10px" }}>
-                  <label>박스 내부 텍스트 정렬: </label>
-
+                <label style={styles.label}>박스 내부 정렬</label>
+                <div style={styles.inlineRow}>
                   <button
                     onClick={() =>
-                      updateSubtitle(
-                        selectedSubtitle.id,
-                        "textAlign",
-                        "left"
-                      )
+                      updateSubtitle(selectedSubtitle.id, "textAlign", "left")
                     }
-                    style={{ marginLeft: "8px" }}
+                    style={styles.secondaryButton}
                   >
                     왼쪽
                   </button>
-
                   <button
                     onClick={() =>
-                      updateSubtitle(
-                        selectedSubtitle.id,
-                        "textAlign",
-                        "center"
-                      )
+                      updateSubtitle(selectedSubtitle.id, "textAlign", "center")
                     }
-                    style={{ marginLeft: "8px" }}
+                    style={styles.secondaryButton}
                   >
                     가운데
                   </button>
-
                   <button
                     onClick={() =>
-                      updateSubtitle(
-                        selectedSubtitle.id,
-                        "textAlign",
-                        "right"
-                      )
+                      updateSubtitle(selectedSubtitle.id, "textAlign", "right")
                     }
-                    style={{ marginLeft: "8px" }}
+                    style={styles.secondaryButton}
                   >
                     오른쪽
                   </button>
                 </div>
 
-                <div style={{ marginTop: "10px" }}>
-                  <label>폰트: </label>
-
-                  <select
-                    value={selectedSubtitle.fontFamily || "Malgun Gothic"}
-                    onChange={(event) =>
-                      updateSubtitle(
-                        selectedSubtitle.id,
-                        "fontFamily",
-                        event.target.value
-                      )
-                    }
-                    style={{ marginLeft: "8px", padding: "6px" }}
-                  >
-                    <option value="Malgun Gothic">맑은 고딕</option>
-                    <option value="Arial">Arial</option>
-                    <option value="Times New Roman">Times New Roman</option>
-                    <option value="Verdana">Verdana</option>
-                    <option value="Georgia">Georgia</option>
-                  </select>
-
-                  <label style={{ marginLeft: "20px" }}>색상: </label>
-
-                  <input
-                    type="color"
-                    value={selectedSubtitle.color || "#ffffff"}
-                    onChange={(event) =>
-                      updateSubtitle(
-                        selectedSubtitle.id,
-                        "color",
-                        event.target.value
-                      )
-                    }
-                    style={{ marginLeft: "8px" }}
-                  />
-                </div>
-
-                <div style={{ marginTop: "10px" }}>
-                  <label>스타일: </label>
+                <div style={styles.inlineRow}>
+                  <label style={styles.colorLabel}>
+                    색상
+                    <input
+                      type="color"
+                      value={selectedSubtitle.color || "#ffffff"}
+                      onChange={(event) =>
+                        updateSubtitle(
+                          selectedSubtitle.id,
+                          "color",
+                          event.target.value
+                        )
+                      }
+                      style={styles.colorInput}
+                    />
+                  </label>
 
                   <button
                     onClick={() =>
@@ -1325,8 +1316,8 @@ function App() {
                       )
                     }
                     style={{
-                      marginLeft: "8px",
-                      fontWeight: selectedSubtitle.bold ? "bold" : "normal"
+                      ...styles.secondaryButton,
+                      borderColor: selectedSubtitle.bold ? "#38bdf8" : "#334155"
                     }}
                   >
                     굵게
@@ -1341,117 +1332,422 @@ function App() {
                       )
                     }
                     style={{
-                      marginLeft: "8px",
-                      fontStyle: selectedSubtitle.italic ? "italic" : "normal"
+                      ...styles.secondaryButton,
+                      borderColor: selectedSubtitle.italic ? "#38bdf8" : "#334155"
                     }}
                   >
                     기울임
                   </button>
                 </div>
 
-                <div style={{ marginTop: "10px" }}>
-                  <label>X: </label>
-                  {renderNumberInput("x")}
-
-                  <label style={{ marginLeft: "20px" }}>Y: </label>
-                  {renderNumberInput("y")}
-                </div>
-
-                <div style={{ marginTop: "10px" }}>
-                  <label>너비: </label>
-                  {renderNumberInput("width")}
-
-                  <label style={{ marginLeft: "20px" }}>높이: </label>
-                  {renderNumberInput("height")}
-                </div>
-
-                <div style={{ marginTop: "10px" }}>
-                  <label>글자 크기: </label>
-
-                  <button
-                    onClick={() => changeFontSize(selectedSubtitle.id, -4)}
-                    style={{ marginLeft: "8px" }}
-                  >
-                    작게
-                  </button>
-
-                  <span style={{ marginLeft: "8px" }}>
-                    {renderNumberInput("fontSize")}
-                  </span>
-
-                  <button
-                    onClick={() => changeFontSize(selectedSubtitle.id, 4)}
-                    style={{ marginLeft: "8px" }}
-                  >
-                    크게
-                  </button>
-                </div>
-
-                <div style={{ marginTop: "10px" }}>
-                  <label>시작 시간(초): </label>
-                  {renderNumberInput("startTime")}
-
-                  <label style={{ marginLeft: "20px" }}>
-                    종료 시간(초):{" "}
-                  </label>
-                  {renderNumberInput("endTime")}
-
-                  <button
-                    onClick={() => deleteSubtitle(selectedSubtitle.id)}
-                    style={{ marginLeft: "20px" }}
-                  >
-                    선택 자막 삭제
-                  </button>
-                </div>
+                <button
+                  onClick={() => deleteSubtitle(selectedSubtitle.id)}
+                  style={styles.dangerButton}
+                >
+                  선택 자막 삭제
+                </button>
               </div>
             )}
-          </div>
-
-          <div style={{ marginTop: "30px" }}>
-            <h3>전체 자막 목록</h3>
-
-            {subtitles.length === 0 && (
-              <p>아직 추가된 자막이 없습니다.</p>
-            )}
-
-            {subtitles.map((subtitle, index) => (
-              <div
-                key={subtitle.id}
-                onClick={() => {
-                  setSelectedSubtitleId(subtitle.id);
-                  setEditingSubtitleId(null);
-                  syncPropertyPanel(subtitle);
-                }}
-                style={{
-                  border:
-                    subtitle.id === selectedSubtitleId
-                      ? "2px solid black"
-                      : "1px solid #ddd",
-                  padding: "10px",
-                  marginBottom: "8px",
-                  width: "600px",
-                  cursor: "pointer"
-                }}
-              >
-                <strong>자막 {index + 1}</strong>
-                <span style={{ marginLeft: "10px", whiteSpace: "pre-wrap" }}>
-                  {subtitle.text}
-                </span>
-
-                <div style={{ fontSize: "12px", marginTop: "6px" }}>
-                  x={subtitle.x}, y={subtitle.y}, 너비={subtitle.width},
-                  높이={subtitle.height}, 시작={subtitle.startTime}초,
-                  종료={subtitle.endTime}초, 글자크기={subtitle.fontSize},
-                  폰트={subtitle.fontFamily || "Malgun Gothic"}, 색상=
-                  {subtitle.color || "#ffffff"}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+          </section>
+        </aside>
+      </main>
     </div>
   );
 }
+
+const styles = {
+  page: {
+    minHeight: "100vh",
+    backgroundColor: "#020617",
+    color: "#e5e7eb",
+    fontFamily:
+      "Noto Sans KR, Malgun Gothic, system-ui, -apple-system, BlinkMacSystemFont, sans-serif",
+    boxSizing: "border-box"
+  },
+  layout: {
+    display: "grid",
+    gridTemplateColumns: "3fr 1fr",
+    height: "100vh",
+    gap: "16px",
+    padding: "16px",
+    boxSizing: "border-box"
+  },
+  leftPanel: {
+    minWidth: 0,
+    display: "grid",
+    gridTemplateRows: "auto auto 1fr auto",
+    gap: "12px",
+    overflow: "hidden"
+  },
+  rightPanel: {
+    minWidth: "320px",
+    display: "grid",
+    gridTemplateRows: "1.1fr 0.9fr",
+    gap: "12px",
+    overflow: "hidden"
+  },
+  topBar: {
+    height: "64px",
+    border: "1px solid #1f2937",
+    borderRadius: "16px",
+    backgroundColor: "#0f172a",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    padding: "0 18px"
+  },
+  projectTitle: {
+    fontSize: "20px",
+    fontWeight: 800,
+    letterSpacing: "-0.03em"
+  },
+  projectMeta: {
+    marginTop: "4px",
+    color: "#94a3b8",
+    fontSize: "12px"
+  },
+  message: {
+    border: "1px solid #1e3a8a",
+    backgroundColor: "#0b1e3a",
+    color: "#bfdbfe",
+    borderRadius: "12px",
+    padding: "10px 14px",
+    fontSize: "13px"
+  },
+  videoArea: {
+    border: "1px solid #1f2937",
+    borderRadius: "18px",
+    backgroundColor: "#0f172a",
+    display: "flex",
+    justifyContent: "center",
+    alignItems: "center",
+    overflow: "hidden",
+    minHeight: 0
+  },
+  videoBox: {
+    position: "relative",
+    width: "360px",
+    height: "640px",
+    border: "1px solid #334155",
+    userSelect: "none",
+    overflow: "hidden",
+    backgroundColor: "black",
+    boxShadow: "0 24px 70px rgba(0,0,0,0.45)"
+  },
+  video: {
+    display: "block",
+    width: "360px",
+    height: "640px",
+    objectFit: "cover"
+  },
+  emptyVideo: {
+    width: "100%",
+    height: "100%",
+    minHeight: "500px",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    color: "#94a3b8"
+  },
+  emptyTitle: {
+    fontSize: "18px",
+    fontWeight: 700,
+    textAlign: "center",
+    marginBottom: "16px"
+  },
+  uploadRow: {
+    display: "flex",
+    gap: "10px",
+    alignItems: "center"
+  },
+  subtitleBox: {
+    position: "absolute",
+    boxSizing: "border-box"
+  },
+  subtitleText: {
+    width: "100%",
+    height: "100%",
+    textShadow: "none",
+    boxSizing: "border-box",
+    padding: "4px",
+    lineHeight: "1.2",
+    whiteSpace: "pre-wrap",
+    wordBreak: "break-word",
+    overflow: "hidden",
+    pointerEvents: "none"
+  },
+  subtitleTextArea: {
+    width: "100%",
+    height: "100%",
+    border: "none",
+    outline: "1px solid white",
+    resize: "none",
+    overflow: "hidden",
+    backgroundColor: "transparent",
+    textShadow: "none",
+    boxSizing: "border-box",
+    padding: "4px",
+    lineHeight: "1.2",
+    whiteSpace: "pre-wrap",
+    wordBreak: "break-word",
+    cursor: "text"
+  },
+  resizeRight: {
+    position: "absolute",
+    right: "-5px",
+    top: 0,
+    width: "10px",
+    height: "100%",
+    cursor: "ew-resize",
+    backgroundColor: "rgba(56, 189, 248, 0.45)"
+  },
+  resizeBottom: {
+    position: "absolute",
+    left: 0,
+    bottom: "-5px",
+    width: "100%",
+    height: "10px",
+    cursor: "ns-resize",
+    backgroundColor: "rgba(56, 189, 248, 0.45)"
+  },
+  resizeCorner: {
+    position: "absolute",
+    right: "-7px",
+    bottom: "-7px",
+    width: "14px",
+    height: "14px",
+    backgroundColor: "#38bdf8",
+    border: "1px solid #020617",
+    cursor: "nwse-resize",
+    zIndex: 10
+  },
+  previewPanel: {
+    border: "1px solid #1f2937",
+    borderRadius: "16px",
+    backgroundColor: "#0f172a",
+    padding: "14px",
+    minHeight: "180px"
+  },
+  sectionHeader: {
+    display: "flex",
+    justifyContent: "space-between",
+    fontWeight: 700,
+    marginBottom: "12px"
+  },
+  mutedText: {
+    color: "#94a3b8",
+    fontSize: "12px",
+    fontWeight: 500
+  },
+  outputEmpty: {
+    height: "120px",
+    border: "1px dashed #334155",
+    borderRadius: "12px",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    color: "#64748b",
+    fontSize: "13px"
+  },
+  outputWrap: {
+    display: "flex",
+    alignItems: "center",
+    gap: "16px"
+  },
+  outputVideo: {
+    width: "120px",
+    height: "213px",
+    objectFit: "cover",
+    borderRadius: "12px",
+    backgroundColor: "black"
+  },
+  saveArea: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "10px"
+  },
+  sideHeader: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    padding: "14px",
+    borderBottom: "1px solid #1f2937"
+  },
+  sideTitle: {
+    fontSize: "15px",
+    fontWeight: 800
+  },
+  sideSubTitle: {
+    marginTop: "3px",
+    color: "#94a3b8",
+    fontSize: "12px"
+  },
+  subtitleListPanel: {
+    border: "1px solid #1f2937",
+    borderRadius: "16px",
+    backgroundColor: "#0f172a",
+    overflow: "hidden",
+    minHeight: 0,
+    display: "flex",
+    flexDirection: "column"
+  },
+  editorPanel: {
+    border: "1px solid #1f2937",
+    borderRadius: "16px",
+    backgroundColor: "#0f172a",
+    overflow: "hidden",
+    minHeight: 0,
+    display: "flex",
+    flexDirection: "column"
+  },
+  subtitleList: {
+    padding: "12px",
+    overflowY: "auto",
+    display: "flex",
+    flexDirection: "column",
+    gap: "8px"
+  },
+  subtitleItem: {
+    textAlign: "left",
+    color: "#e5e7eb",
+    border: "1px solid #1f2937",
+    borderRadius: "12px",
+    padding: "10px",
+    cursor: "pointer"
+  },
+  subtitleItemTop: {
+    display: "flex",
+    justifyContent: "space-between",
+    color: "#94a3b8",
+    fontSize: "11px",
+    marginBottom: "6px"
+  },
+  subtitleItemText: {
+    fontSize: "13px",
+    lineHeight: "1.45",
+    whiteSpace: "pre-wrap"
+  },
+  emptySideText: {
+    padding: "18px",
+    color: "#64748b",
+    fontSize: "13px",
+    lineHeight: "1.5"
+  },
+  form: {
+    padding: "14px",
+    overflowY: "auto",
+    display: "flex",
+    flexDirection: "column",
+    gap: "10px"
+  },
+  formGrid: {
+    display: "grid",
+    gridTemplateColumns: "1fr 1fr",
+    gap: "10px"
+  },
+  label: {
+    display: "block",
+    color: "#94a3b8",
+    fontSize: "12px",
+    marginBottom: "5px"
+  },
+  input: {
+    width: "100%",
+    boxSizing: "border-box",
+    backgroundColor: "#020617",
+    color: "#e5e7eb",
+    border: "1px solid #334155",
+    borderRadius: "10px",
+    padding: "9px 10px",
+    outline: "none"
+  },
+  propertyTextarea: {
+    width: "100%",
+    minHeight: "78px",
+    boxSizing: "border-box",
+    backgroundColor: "#020617",
+    color: "#e5e7eb",
+    border: "1px solid #334155",
+    borderRadius: "10px",
+    padding: "10px",
+    resize: "vertical",
+    outline: "none",
+    fontFamily: "inherit"
+  },
+  inlineRow: {
+    display: "flex",
+    gap: "8px",
+    alignItems: "center",
+    flexWrap: "wrap"
+  },
+  primaryButton: {
+    border: "none",
+    borderRadius: "999px",
+    padding: "10px 16px",
+    backgroundColor: "#38bdf8",
+    color: "#020617",
+    fontWeight: 800,
+    cursor: "pointer"
+  },
+  smallButton: {
+    border: "1px solid #38bdf8",
+    borderRadius: "999px",
+    padding: "8px 12px",
+    backgroundColor: "transparent",
+    color: "#7dd3fc",
+    fontWeight: 700,
+    cursor: "pointer"
+  },
+  secondaryButton: {
+    border: "1px solid #334155",
+    borderRadius: "10px",
+    padding: "8px 10px",
+    backgroundColor: "#111827",
+    color: "#e5e7eb",
+    cursor: "pointer"
+  },
+  saveButton: {
+    border: "none",
+    borderRadius: "12px",
+    padding: "12px 18px",
+    backgroundColor: "#22c55e",
+    color: "#052e16",
+    fontWeight: 900,
+    cursor: "pointer",
+    width: "160px"
+  },
+  downloadButton: {
+    display: "inline-block",
+    textDecoration: "none",
+    borderRadius: "12px",
+    padding: "12px 18px",
+    backgroundColor: "#22c55e",
+    color: "#052e16",
+    fontWeight: 900
+  },
+  dangerButton: {
+    marginTop: "6px",
+    border: "1px solid #7f1d1d",
+    borderRadius: "10px",
+    padding: "10px",
+    backgroundColor: "#450a0a",
+    color: "#fecaca",
+    cursor: "pointer",
+    fontWeight: 700
+  },
+  colorLabel: {
+    display: "flex",
+    alignItems: "center",
+    gap: "8px",
+    color: "#94a3b8",
+    fontSize: "12px"
+  },
+  colorInput: {
+    width: "34px",
+    height: "34px",
+    border: "none",
+    backgroundColor: "transparent"
+  }
+};
 
 export default App;
