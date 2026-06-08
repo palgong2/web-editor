@@ -15,7 +15,6 @@ app.set("trust proxy", true);
 
 app.use(cors());
 app.use(express.json({ limit: "50mb" }));
-
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
 const EDITOR_WIDTH = 360;
@@ -24,15 +23,7 @@ const EDITOR_HEIGHT = 640;
 const OUTPUT_WIDTH = 720;
 const OUTPUT_HEIGHT = 1280;
 
-/*
-  브라우저 CSS 글자 크기와 FFmpeg ASS 글자 크기가 달라서 보정합니다.
-  값이 크면 결과 영상 글자가 커지고, 작으면 결과 영상 글자가 작아집니다.
-*/
 const FONT_SIZE_MULTIPLIER = 1.22;
-
-/*
-  App.jsx의 lineHeight: "1.2"와 맞춥니다.
-*/
 const LINE_HEIGHT_MULTIPLIER = 1.2;
 
 const DIRECT_UPLOAD_DIR = path.join(__dirname, "uploads", "original");
@@ -41,26 +32,16 @@ const OUTPUT_DIR = path.join(__dirname, "uploads", "output");
 
 const EXTERNAL_ROOT_DIR = path.join(__dirname, "uploads", "external");
 const TMP_DIR = path.join(__dirname, "uploads", "tmp");
-
-/*
-  Render Linux 서버에서 한글 자막이 네모로 깨지는 문제를 막기 위해
-  서버 프로젝트 내부 fonts 폴더를 FFmpeg/libass에 알려줍니다.
-
-  필요한 파일:
-  server/fonts/NotoSansKR-Regular.ttf
-*/
 const FONT_DIR = path.join(__dirname, "fonts");
 
-/*
-  Hilite에서 import 완료 후 열어줄 프론트 주소입니다.
-
-  로컬:
-  EDITOR_PUBLIC_URL=http://localhost:5173
-
-  Render:
-  EDITOR_PUBLIC_URL=https://web-editor-client.onrender.com
-*/
 const EDITOR_PUBLIC_URL = process.env.EDITOR_PUBLIC_URL || "";
+
+const RENDER_PRESET = process.env.RENDER_PRESET || "veryfast";
+const RENDER_CRF = process.env.RENDER_CRF || "23";
+
+const log = (...args) => {
+  console.log(new Date().toISOString(), ...args);
+};
 
 const ensureFolders = () => {
   const folders = [
@@ -118,7 +99,7 @@ const externalTempStorage = multer.diskStorage({
 const externalUpload = multer({
   storage: externalTempStorage,
   limits: {
-    fileSize: 1024 * 1024 * 500
+    fileSize: 1024 * 1024 * 800
   }
 });
 
@@ -336,25 +317,7 @@ const hasKoreanText = (text) => {
   return /[ㄱ-ㅎㅏ-ㅣ가-힣]/.test(String(text || ""));
 };
 
-/*
-  Render Linux에는 Malgun Gothic이 없습니다.
-  ASS 렌더링 단계에서는 서버에 포함한 Noto Sans KR로 강제 매핑합니다.
-*/
-const getAssFontFamily = (fontFamily) => {
-  const requestedFont = String(fontFamily || "Malgun Gothic");
-
-  if (
-    requestedFont === "Malgun Gothic" ||
-    requestedFont === "맑은 고딕" ||
-    requestedFont === "Arial" ||
-    requestedFont === "Verdana" ||
-    requestedFont === "Georgia" ||
-    requestedFont === "Times New Roman" ||
-    requestedFont === "Noto Sans KR"
-  ) {
-    return "Noto Sans KR";
-  }
-
+const getAssFontFamily = () => {
   return "Noto Sans KR";
 };
 
@@ -561,13 +524,7 @@ const muxVideoAndVoice = async (videoPath, voicePath, outputPath) => {
     "-map",
     "1:a:0",
     "-c:v",
-    "libx264",
-    "-preset",
-    "veryfast",
-    "-crf",
-    "18",
-    "-pix_fmt",
-    "yuv420p",
+    "copy",
     "-c:a",
     "aac",
     "-b:a",
@@ -578,7 +535,41 @@ const muxVideoAndVoice = async (videoPath, voicePath, outputPath) => {
     outputPath
   ];
 
-  await runFfmpeg(args);
+  try {
+    await runFfmpeg(args);
+  } catch (error) {
+    log("[mux] copy 병합 실패. libx264 재인코딩으로 재시도합니다.");
+
+    const fallbackArgs = [
+      "-y",
+      "-i",
+      videoPath,
+      "-i",
+      voicePath,
+      "-map",
+      "0:v:0",
+      "-map",
+      "1:a:0",
+      "-c:v",
+      "libx264",
+      "-preset",
+      "veryfast",
+      "-crf",
+      "23",
+      "-pix_fmt",
+      "yuv420p",
+      "-c:a",
+      "aac",
+      "-b:a",
+      "192k",
+      "-shortest",
+      "-movflags",
+      "+faststart",
+      outputPath
+    ];
+
+    await runFfmpeg(fallbackArgs);
+  }
 };
 
 const pushRenderedVideoToCallback = async ({
@@ -722,16 +713,6 @@ app.post("/api/upload", directUpload.single("video"), (req, res) => {
   });
 });
 
-/*
-  Hilite가 편집 버튼을 눌렀을 때 호출하는 import API입니다.
-
-  multipart/form-data:
-  - jobId: Hilite 작업 ID
-  - callbackUrl: 편집 완료 mp4를 받을 Hilite API 주소
-  - video: 자막 없는 영상 mp4
-  - voice: TTS 음성 mp3
-  - srt: subtitles.srt
-*/
 app.post(
   "/api/external/import",
   externalUpload.fields([
@@ -740,6 +721,8 @@ app.post(
     { name: "srt", maxCount: 1 }
   ]),
   async (req, res) => {
+    console.time("[external/import] total");
+
     let sessionDir = null;
 
     try {
@@ -748,6 +731,15 @@ app.post(
       const videoFile = req.files?.video?.[0];
       const voiceFile = req.files?.voice?.[0];
       const srtFile = req.files?.srt?.[0];
+
+      log("[external/import] 요청 수신");
+      log("[external/import] jobId:", jobId);
+      log("[external/import] callbackUrl:", callbackUrl || "(empty)");
+      log("[external/import] files:", {
+        video: videoFile?.originalname,
+        voice: voiceFile?.originalname || "(not provided)",
+        srt: srtFile?.originalname
+      });
 
       if (!jobId) {
         cleanupTempFiles(req.files);
@@ -760,13 +752,6 @@ app.post(
         cleanupTempFiles(req.files);
         return res.status(400).json({
           message: "video 파일이 필요합니다."
-        });
-      }
-
-      if (!voiceFile) {
-        cleanupTempFiles(req.files);
-        return res.status(400).json({
-          message: "voice 파일이 필요합니다."
         });
       }
 
@@ -792,17 +777,33 @@ app.post(
       const previewVideoPath = path.join(inputDir, "video-with-voice.mp4");
 
       moveUploadedFile(videoFile, videoPath);
-      moveUploadedFile(voiceFile, voicePath);
+
+      if (voiceFile) {
+        moveUploadedFile(voiceFile, voicePath);
+      }
+
       moveUploadedFile(srtFile, srtPath);
 
-      await muxVideoAndVoice(videoPath, voicePath, previewVideoPath);
+      if (voiceFile) {
+        log("[external/import] video + voice 병합 시작:", sessionId);
+        console.time("[external/import] mux video voice");
+
+        await muxVideoAndVoice(videoPath, voicePath, previewVideoPath);
+
+        console.timeEnd("[external/import] mux video voice");
+        log("[external/import] video + voice 병합 완료:", sessionId);
+      } else {
+        log("[external/import] voice 없음. video를 preview 파일로 복사:", sessionId);
+        fs.copyFileSync(videoPath, previewVideoPath);
+      }
 
       const meta = {
         sessionId,
         jobId,
         callbackUrl: callbackUrl || "",
         createdAt: new Date().toISOString(),
-        status: "imported"
+        status: "imported",
+        importMode: voiceFile ? "video_voice_srt" : "video_with_voice_srt"
       };
 
       writeMeta(sessionDir, meta);
@@ -811,14 +812,19 @@ app.post(
         sessionId
       )}`;
 
+      log("[external/import] editorUrl 생성:", editorUrl);
+      console.timeEnd("[external/import] total");
+
       res.json({
         message: "외부 편집 세션 생성 완료",
         sessionId,
         jobId,
+        importMode: meta.importMode,
         editorUrl
       });
     } catch (error) {
-      console.error("외부 import 실패:", error);
+      console.timeEnd("[external/import] total");
+      console.error("[external/import] 실패:", error);
 
       cleanupTempFiles(req.files);
 
@@ -843,6 +849,8 @@ app.get("/api/external/session/:sessionId", (req, res) => {
     const { sessionId } = req.params;
     const sessionDir = getSessionDir(sessionId);
     const inputDir = path.join(sessionDir, "input");
+
+    log("[external/session] 조회:", sessionId);
 
     if (!fs.existsSync(sessionDir)) {
       return res.status(404).json({
@@ -871,6 +879,12 @@ app.get("/api/external/session/:sessionId", (req, res) => {
 
     const videoUrl = `${getPublicBaseUrl(req)}/uploads/external/${sessionId}/input/video-with-voice.mp4`;
 
+    log("[external/session] 조회 성공:", {
+      sessionId,
+      jobId: meta.jobId,
+      subtitles: subtitles.length
+    });
+
     res.json({
       message: "외부 편집 세션 조회 성공",
       sessionId,
@@ -879,7 +893,7 @@ app.get("/api/external/session/:sessionId", (req, res) => {
       subtitles
     });
   } catch (error) {
-    console.error("외부 편집 세션 조회 실패:", error);
+    console.error("[external/session] 실패:", error);
 
     res.status(500).json({
       message: "외부 편집 세션 조회 실패",
@@ -889,10 +903,20 @@ app.get("/api/external/session/:sessionId", (req, res) => {
 });
 
 app.post("/api/render", async (req, res) => {
+  console.time("[render] total");
+
   let sessionDirForCleanup = null;
 
   try {
     const { filename, sessionId, subtitles } = req.body;
+
+    log("[render] 요청 수신");
+    log("[render] sessionId:", sessionId || "(direct upload)");
+    log("[render] filename:", filename || "(external mode)");
+    log(
+      "[render] subtitles count:",
+      Array.isArray(subtitles) ? subtitles.length : 0
+    );
 
     if (!Array.isArray(subtitles) || subtitles.length === 0) {
       return res.status(400).json({
@@ -916,7 +940,8 @@ app.post("/api/render", async (req, res) => {
 
       if (!fs.existsSync(sessionDir)) {
         return res.status(404).json({
-          message: "편집 세션을 찾을 수 없습니다."
+          message:
+            "편집 세션을 찾을 수 없습니다. 서버 재시작 또는 재배포로 임시 파일이 삭제되었을 수 있습니다. Hilite에서 편집기를 다시 열어 주세요."
         });
       }
 
@@ -931,8 +956,11 @@ app.post("/api/render", async (req, res) => {
       outputPath = path.join(outputDir, outputFilename);
 
       if (!fs.existsSync(inputPath)) {
+        log("[render] input 파일 없음:", inputPath);
+
         return res.status(404).json({
-          message: "외부 편집 입력 영상을 찾을 수 없습니다."
+          message:
+            "편집 세션 입력 영상을 찾을 수 없습니다. 서버 재시작 또는 재배포로 임시 파일이 삭제되었을 수 있습니다. Hilite에서 편집기를 다시 열어 주세요."
         });
       }
 
@@ -964,19 +992,17 @@ app.post("/api/render", async (req, res) => {
       outputPath = path.join(OUTPUT_DIR, outputFilename);
     }
 
+    log("[render] inputPath:", inputPath);
+    log("[render] subtitlePath:", subtitlePath);
+    log("[render] outputPath:", outputPath);
+    log("[render] preset/crf:", RENDER_PRESET, RENDER_CRF);
+
     const assContent = createAssSubtitle(subtitles);
     fs.writeFileSync(subtitlePath, assContent, "utf8");
 
     const subtitleForFfmpeg = escapeFfmpegFilterPath(subtitlePath);
     const fontsDirForFfmpeg = escapeFfmpegFilterPath(FONT_DIR);
 
-    /*
-      좌표 안정성을 위해 360x640으로 먼저 맞춘 뒤 ASS를 입히고,
-      마지막에 720x1280으로 확대합니다.
-
-      fontsdir 옵션으로 server/fonts 안의 NotoSansKR-Regular.ttf를
-      FFmpeg/libass가 찾을 수 있게 합니다.
-    */
     const videoFilter = [
       `scale=${EDITOR_WIDTH}:${EDITOR_HEIGHT}:force_original_aspect_ratio=increase`,
       `crop=${EDITOR_WIDTH}:${EDITOR_HEIGHT}`,
@@ -993,9 +1019,9 @@ app.post("/api/render", async (req, res) => {
       "-c:v",
       "libx264",
       "-preset",
-      "medium",
+      RENDER_PRESET,
       "-crf",
-      "18",
+      String(RENDER_CRF),
       "-pix_fmt",
       "yuv420p",
       "-c:a",
@@ -1007,11 +1033,20 @@ app.post("/api/render", async (req, res) => {
       outputPath
     ];
 
+    log("[render] FFmpeg 시작");
+    console.time("[render] ffmpeg");
+
     await runFfmpeg(args);
+
+    console.timeEnd("[render] ffmpeg");
+    log("[render] FFmpeg 완료");
 
     let callbackResult = null;
 
     if (isExternalMode) {
+      log("[render] callback 시작:", externalMeta.callbackUrl || "(empty)");
+      console.time("[render] callback");
+
       callbackResult = await pushRenderedVideoToCallback({
         callbackUrl: externalMeta.callbackUrl,
         jobId: externalMeta.jobId,
@@ -1019,9 +1054,15 @@ app.post("/api/render", async (req, res) => {
         outputPath
       });
 
+      console.timeEnd("[render] callback");
+      log("[render] callback 결과:", callbackResult);
+
       if (!callbackResult.skipped) {
+        log("[render] callback 성공. 세션 폴더 삭제:", sessionDirForCleanup);
         safeRemoveDir(sessionDirForCleanup);
       }
+
+      console.timeEnd("[render] total");
 
       return res.json({
         message: callbackResult.skipped
@@ -1037,6 +1078,8 @@ app.post("/api/render", async (req, res) => {
 
     outputUrl = `${getPublicBaseUrl(req)}/uploads/output/${outputFilename}?t=${Date.now()}`;
 
+    console.timeEnd("[render] total");
+
     res.json({
       message: "자막 합성 완료",
       outputFilename,
@@ -1044,7 +1087,8 @@ app.post("/api/render", async (req, res) => {
       externalMode: false
     });
   } catch (error) {
-    console.error("렌더링 실패:", error);
+    console.timeEnd("[render] total");
+    console.error("[render] 실패:", error);
 
     if (sessionDirForCleanup && fs.existsSync(sessionDirForCleanup)) {
       try {
@@ -1069,5 +1113,5 @@ app.post("/api/render", async (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`서버 실행 중: http://localhost:${PORT}`);
+  log(`서버 실행 중: http://localhost:${PORT}`);
 });
