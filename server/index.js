@@ -62,10 +62,10 @@ const sanitizeOutputFilename = (value) => {
 };
 
 const sanitizeSaveTitle = (value) => {
-  const raw = String(value || "edited-video").trim();
+  const raw = String(value || "").trim();
 
   if (!raw) {
-    return "edited-video";
+    return "";
   }
 
   return raw.slice(0, 120);
@@ -611,8 +611,7 @@ const pushRenderedVideoToCallback = async ({
   jobId,
   sessionId,
   outputPath,
-  saveTitle,
-  saveFilename
+  saveTitle
 }) => {
   if (!callbackUrl) {
     return {
@@ -631,13 +630,13 @@ const pushRenderedVideoToCallback = async ({
     );
   }
 
-  const finalSaveTitle = sanitizeSaveTitle(
-    saveTitle || jobId || sessionId || "edited-video"
-  );
+  const finalSaveTitle = sanitizeSaveTitle(saveTitle);
 
-  const finalSaveFilename = sanitizeOutputFilename(
-    saveFilename || finalSaveTitle
-  );
+  if (!finalSaveTitle) {
+    throw new Error("저장 제목이 필요합니다.");
+  }
+
+  const finalSaveFilename = sanitizeOutputFilename(finalSaveTitle);
 
   const fileBuffer = fs.readFileSync(outputPath);
   const blob = new Blob([fileBuffer], {
@@ -852,8 +851,8 @@ app.post(
         sessionId,
         jobId,
         callbackUrl: callbackUrl || "",
-        title: sanitizeSaveTitle(title || topic || jobId),
-        topic: sanitizeSaveTitle(topic || title || jobId),
+        title: sanitizeSaveTitle(title || topic || ""),
+        topic: sanitizeSaveTitle(topic || title || ""),
         createdAt: new Date().toISOString(),
         status: "imported",
         importMode: voiceFile ? "video_voice_srt" : "video_with_voice_srt"
@@ -902,6 +901,16 @@ app.post(
 app.get("/api/external/session/:sessionId", (req, res) => {
   try {
     const { sessionId } = req.params;
+
+    log("[external/session] raw sessionId:", sessionId);
+
+    if (!/^session_[a-zA-Z0-9]+$/.test(String(sessionId || ""))) {
+      return res.status(400).json({
+        message: "잘못된 sessionId입니다.",
+        sessionId
+      });
+    }
+
     const sessionDir = getSessionDir(sessionId);
     const inputDir = path.join(sessionDir, "input");
 
@@ -945,8 +954,8 @@ app.get("/api/external/session/:sessionId", (req, res) => {
       message: "외부 편집 세션 조회 성공",
       sessionId,
       jobId: meta.jobId,
-      title: meta.title || meta.topic || meta.jobId,
-      topic: meta.topic || meta.title || meta.jobId,
+      title: meta.title || "",
+      topic: meta.topic || "",
       videoUrl,
       subtitles
     });
@@ -972,8 +981,7 @@ app.post("/api/render", async (req, res) => {
       subtitles,
       mode,
       useExistingOutput,
-      saveTitle,
-      saveFilename
+      saveTitle
     } = req.body;
 
     const renderMode = mode || "save";
@@ -982,8 +990,7 @@ app.post("/api/render", async (req, res) => {
     log("[render] mode:", renderMode);
     log("[render] sessionId:", sessionId || "(direct upload)");
     log("[render] filename:", filename || "(external mode)");
-    log("[render] saveTitle:", saveTitle || "(default)");
-    log("[render] saveFilename:", saveFilename || "(default)");
+    log("[render] saveTitle:", saveTitle || "(empty)");
     log(
       "[render] subtitles count:",
       Array.isArray(subtitles) ? subtitles.length : 0
@@ -1038,12 +1045,7 @@ app.post("/api/render", async (req, res) => {
       writeMeta(sessionDir, {
         ...externalMeta,
         status: renderMode === "preview" ? "preview_rendering" : "saving",
-        saveTitle: sanitizeSaveTitle(
-          saveTitle || externalMeta.title || externalMeta.jobId
-        ),
-        saveFilename: sanitizeOutputFilename(
-          saveFilename || saveTitle || externalMeta.title || externalMeta.jobId
-        ),
+        saveTitle: sanitizeSaveTitle(saveTitle || ""),
         renderingStartedAt: new Date().toISOString()
       });
     } else {
@@ -1137,12 +1139,16 @@ app.post("/api/render", async (req, res) => {
     if (isExternalMode) {
       outputUrl = `${getPublicBaseUrl(req)}/uploads/external/${sessionId}/output/${outputFilename}?t=${Date.now()}`;
 
-      const finalSaveTitle = sanitizeSaveTitle(
-        saveTitle || externalMeta.title || externalMeta.jobId || "edited-video"
-      );
+      const finalSaveTitle = sanitizeSaveTitle(saveTitle || "");
+
+      if (renderMode === "save" && !finalSaveTitle) {
+        return res.status(400).json({
+          message: "저장 제목이 필요합니다."
+        });
+      }
 
       const finalSaveFilename = sanitizeOutputFilename(
-        saveFilename || finalSaveTitle
+        finalSaveTitle || "preview-video"
       );
 
       if (renderMode === "preview") {
@@ -1169,8 +1175,7 @@ app.post("/api/render", async (req, res) => {
         jobId: externalMeta.jobId,
         sessionId,
         outputPath,
-        saveTitle: finalSaveTitle,
-        saveFilename: finalSaveFilename
+        saveTitle: finalSaveTitle
       });
 
       console.timeEnd("[render] callback");
@@ -1190,7 +1195,7 @@ app.post("/api/render", async (req, res) => {
         sessionId,
         jobId: externalMeta.jobId,
         saveTitle: finalSaveTitle,
-        saveFilename: finalSaveFilename,
+        saveFilename: callbackResult.saveFilename,
         externalMode: true,
         shouldClose: !callbackResult.skipped,
         callbackResult

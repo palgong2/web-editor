@@ -19,8 +19,7 @@ function App() {
   const [saving, setSaving] = useState(false);
   const [outputUrl, setOutputUrl] = useState("");
 
-  const [saveTitle, setSaveTitle] = useState("edited-video");
-  const [saveFilename, setSaveFilename] = useState("edited-video.mp4");
+  const [saveTitle, setSaveTitle] = useState("");
 
   const [currentTime, setCurrentTime] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -71,28 +70,6 @@ function App() {
 
     return Number(a.id || 0) - Number(b.id || 0);
   });
-
-  const sanitizeFilename = (value) => {
-    const raw = String(value || "edited-video").trim();
-
-    const cleaned = raw
-      .replace(/[\\/:*?"<>|]/g, "_")
-      .replace(/\s+/g, "_");
-
-    if (!cleaned) {
-      return "edited-video.mp4";
-    }
-
-    if (cleaned.toLowerCase().endsWith(".mp4")) {
-      return cleaned;
-    }
-
-    return `${cleaned}.mp4`;
-  };
-
-  const titleToFilename = (title) => {
-    return sanitizeFilename(title || "edited-video");
-  };
 
   const normalizeSubtitleStyle = (subtitle) => {
     return {
@@ -211,9 +188,6 @@ function App() {
         normalizeSubtitleStyle
       );
 
-      const defaultTitle =
-        data.title || data.topic || data.jobId || data.sessionId || "edited-video";
-
       setExternalMode(true);
       setSessionId(data.sessionId);
       setVideoUrl(data.videoUrl);
@@ -222,8 +196,7 @@ function App() {
       setCurrentTime(0);
       setIsPlaying(false);
       setOutputUrl("");
-      setSaveTitle(defaultTitle);
-      setSaveFilename(titleToFilename(defaultTitle));
+      setSaveTitle("");
       setSubtitles(normalizedSubtitles);
       setSelectedSubtitleId(null);
       setEditingSubtitleId(null);
@@ -311,8 +284,7 @@ function App() {
       setCurrentTime(0);
       setIsPlaying(false);
       setOutputUrl("");
-      setSaveTitle("edited-video");
-      setSaveFilename("edited-video.mp4");
+      setSaveTitle("");
       setSubtitles([]);
       setSelectedSubtitleId(null);
       setEditingSubtitleId(null);
@@ -822,8 +794,7 @@ function App() {
           mode: "preview",
           filename: externalMode ? undefined : filename,
           sessionId: externalMode ? sessionId : undefined,
-          saveTitle: saveTitle.trim() || "edited-video",
-          saveFilename: sanitizeFilename(saveFilename),
+          saveTitle: saveTitle.trim(),
           subtitles: renderSubtitles
         })
       });
@@ -864,8 +835,12 @@ function App() {
       return;
     }
 
-    const finalSaveTitle = saveTitle.trim() || "edited-video";
-    const finalSaveFilename = sanitizeFilename(saveFilename || finalSaveTitle);
+    const finalSaveTitle = saveTitle.trim();
+
+    if (!finalSaveTitle) {
+      setMessage("저장 제목을 입력해 주세요.");
+      return;
+    }
 
     try {
       setSaving(true);
@@ -881,7 +856,6 @@ function App() {
           useExistingOutput: true,
           sessionId,
           saveTitle: finalSaveTitle,
-          saveFilename: finalSaveFilename,
           subtitles: renderSubtitles
         })
       });
@@ -1231,31 +1205,9 @@ function App() {
                               <input
                                 type="text"
                                 value={saveTitle}
-                                onChange={(event) => {
-                                  const nextTitle = event.target.value;
-                                  setSaveTitle(nextTitle);
-                                  setSaveFilename(titleToFilename(nextTitle));
-                                }}
-                                onBlur={() => {
-                                  const nextTitle =
-                                    saveTitle.trim() || "edited-video";
-                                  setSaveTitle(nextTitle);
-                                  setSaveFilename(titleToFilename(nextTitle));
-                                }}
-                                style={styles.saveMetaInput}
-                              />
-                            </div>
-
-                            <div style={styles.saveMetaBox}>
-                              <label style={styles.saveMetaLabel}>저장 파일명</label>
-                              <input
-                                type="text"
-                                value={saveFilename}
+                                placeholder="저장할 영상 제목을 입력하세요"
                                 onChange={(event) =>
-                                  setSaveFilename(event.target.value)
-                                }
-                                onBlur={() =>
-                                  setSaveFilename(sanitizeFilename(saveFilename))
+                                  setSaveTitle(event.target.value)
                                 }
                                 style={styles.saveMetaInput}
                               />
@@ -1768,12 +1720,12 @@ const styles = {
     boxShadow: "0 16px 40px rgba(0,0,0,0.35)"
   },
   previewActionBar: {
-    minHeight: "118px",
+    minHeight: "86px",
     display: "flex",
     flexDirection: "column",
     justifyContent: "center",
     alignItems: "center",
-    gap: "7px"
+    gap: "8px"
   },
   saveMetaBox: {
     width: "100%",
@@ -1792,7 +1744,7 @@ const styles = {
     color: "#e5e7eb",
     border: "1px solid #334155",
     borderRadius: "9px",
-    padding: "7px 10px",
+    padding: "8px 10px",
     outline: "none",
     fontSize: "12px",
     textAlign: "center"
