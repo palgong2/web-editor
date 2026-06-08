@@ -577,7 +577,11 @@ function App() {
 
     event.stopPropagation();
 
-    const boxRect = videoBoxRef.current.getBoundingClientRect();
+    const boxRect = videoBoxRef.current?.getBoundingClientRect();
+
+    if (!boxRect) {
+      return;
+    }
 
     const mouseX = event.clientX - boxRect.left;
     const mouseY = event.clientY - boxRect.top;
@@ -858,12 +862,35 @@ function App() {
     );
   };
 
+  const renderBusyOverlay = () => {
+    const visible = rendering || saving;
+
+    if (!visible) {
+      return null;
+    }
+
+    const title = rendering ? "미리보기 생성중입니다" : "저장중입니다";
+    const description = rendering
+      ? "잠시만 기다려주세요"
+      : "원본 시스템으로 결과 영상을 전송하고 있습니다";
+
+    return (
+      <div style={styles.overlay}>
+        <div style={styles.overlayCard}>
+          <div style={styles.spinner} />
+          <div style={styles.overlayTitle}>{title}</div>
+          <div style={styles.overlayDescription}>{description}</div>
+        </div>
+      </div>
+    );
+  };
+
   const renderVideoCanvas = () => {
     if (!videoUrl) {
       return (
-        <div style={styles.emptyVideo}>
+        <div style={styles.emptyCanvas}>
           {!externalMode && (
-            <div>
+            <div style={styles.uploadBlock}>
               <div style={styles.emptyTitle}>MP4 영상을 업로드하세요</div>
               <div style={styles.uploadRow}>
                 <input type="file" accept="video/mp4" onChange={handleFileChange} />
@@ -1048,6 +1075,16 @@ function App() {
 
   return (
     <div style={styles.page}>
+      <style>{`
+        * { box-sizing: border-box; }
+        @keyframes caption-editor-spin {
+          0% { transform: rotate(0deg); }
+          100% { transform: rotate(360deg); }
+        }
+      `}</style>
+
+      {renderBusyOverlay()}
+
       <main style={styles.layout}>
         <section style={styles.leftPanel}>
           <div style={styles.topBar}>
@@ -1059,58 +1096,100 @@ function App() {
               </div>
             </div>
 
-            <button
-              onClick={previewVideo}
-              disabled={rendering || !videoUrl}
-              style={{
-                ...styles.primaryButton,
-                opacity: rendering || !videoUrl ? 0.55 : 1
-              }}
-            >
-              {rendering ? "미리보기 생성 중..." : "결과 미리보기"}
-            </button>
+            <div style={styles.topActions}>
+              {!externalMode && !videoUrl && (
+                <>
+                  <input
+                    type="file"
+                    accept="video/mp4"
+                    onChange={handleFileChange}
+                    style={styles.fileInput}
+                  />
+                  <button style={styles.secondaryTopButton} onClick={uploadVideo}>
+                    영상 업로드
+                  </button>
+                </>
+              )}
+
+              <button
+                onClick={previewVideo}
+                disabled={rendering || !videoUrl}
+                style={{
+                  ...styles.primaryButton,
+                  opacity: rendering || !videoUrl ? 0.55 : 1
+                }}
+              >
+                {rendering ? "미리보기 생성 중..." : "결과 미리보기"}
+              </button>
+            </div>
           </div>
 
           {message && <div style={styles.message}>{message}</div>}
 
-          <div style={styles.videoArea}>{renderVideoCanvas()}</div>
-
-          <div style={styles.previewPanel}>
-            <div style={styles.sectionHeader}>
-              <span>결과 미리보기</span>
-              <span style={styles.mutedText}>720×1280 출력 기준</span>
+          <div style={styles.workspaceCard}>
+            <div style={styles.workspaceHeader}>
+              <div style={styles.workspaceTitle}>편집 작업공간</div>
+              <div style={styles.workspaceMeta}>
+                왼쪽은 원본 편집, 오른쪽은 결과 미리보기입니다
+              </div>
             </div>
 
-            {!outputUrl && (
-              <div style={styles.outputEmpty}>
-                결과 미리보기를 생성하면 이 영역에 영상이 표시됩니다.
+            <div style={styles.workspaceGrid}>
+              <div style={styles.videoStageCard}>
+                <div style={styles.panelHeader}>
+                  <span>원본 영상</span>
+                  <span style={styles.panelSubText}>360×640 편집 기준</span>
+                </div>
+
+                <div style={styles.stageBody}>{renderVideoCanvas()}</div>
               </div>
-            )}
 
-            {outputUrl && (
-              <div style={styles.outputWrap}>
-                <video src={outputUrl} controls style={styles.outputVideo} />
+              <div style={styles.previewStageCard}>
+                <div style={styles.panelHeader}>
+                  <span>결과 미리보기</span>
+                  <span style={styles.panelSubText}>720×1280 출력 기준</span>
+                </div>
 
-                <div style={styles.saveArea}>
-                  {externalMode ? (
-                    <button
-                      onClick={saveFinalVideo}
-                      disabled={saving}
-                      style={{
-                        ...styles.saveButton,
-                        opacity: saving ? 0.55 : 1
-                      }}
-                    >
-                      {saving ? "저장 중..." : "저장"}
-                    </button>
-                  ) : (
-                    <a href={outputUrl} download style={styles.downloadButton}>
-                      결과 영상 다운로드
-                    </a>
+                <div style={styles.previewStageBody}>
+                  {!outputUrl && (
+                    <div style={styles.previewEmpty}>
+                      결과 미리보기를 생성하면 이 영역에 영상이 표시됩니다.
+                    </div>
+                  )}
+
+                  {outputUrl && (
+                    <>
+                      <div style={styles.previewVideoFrame}>
+                        <video
+                          src={outputUrl}
+                          controls
+                          style={styles.previewVideo}
+                        />
+                      </div>
+
+                      <div style={styles.previewActionBar}>
+                        {externalMode ? (
+                          <button
+                            onClick={saveFinalVideo}
+                            disabled={saving}
+                            style={{
+                              ...styles.saveButton,
+                              opacity: saving ? 0.55 : 1
+                            }}
+                          >
+                            {saving ? "저장 중..." : "저장"}
+                          </button>
+                        ) : (
+                          <a href={outputUrl} download style={styles.downloadButton}>
+                            결과 영상 다운로드
+                          </a>
+                        )}
+                      </div>
+                    </>
                   )}
                 </div>
               </div>
-            )}
+            </div>
           </div>
         </section>
 
@@ -1176,7 +1255,7 @@ function App() {
 
             {!selectedSubtitle && (
               <div style={styles.emptySideText}>
-                오른쪽 위 목록에서 자막을 선택하면 편집 항목이 표시됩니다.
+                오른쪽 위 자막 목록에서 항목을 선택하면 이 영역에서 편집할 수 있습니다.
               </div>
             )}
 
@@ -1208,11 +1287,11 @@ function App() {
                     {renderNumberInput("height")}
                   </div>
                   <div>
-                    <label style={styles.label}>시작</label>
+                    <label style={styles.label}>시작 시간</label>
                     {renderNumberInput("startTime")}
                   </div>
                   <div>
-                    <label style={styles.label}>종료</label>
+                    <label style={styles.label}>종료 시간</label>
                     {renderNumberInput("endTime")}
                   </div>
                 </div>
@@ -1358,107 +1437,196 @@ function App() {
 const styles = {
   page: {
     minHeight: "100vh",
-    backgroundColor: "#020617",
+    backgroundColor: "#e5e7eb",
     color: "#e5e7eb",
     fontFamily:
-      "Noto Sans KR, Malgun Gothic, system-ui, -apple-system, BlinkMacSystemFont, sans-serif",
-    boxSizing: "border-box"
+      "Noto Sans KR, Malgun Gothic, system-ui, -apple-system, BlinkMacSystemFont, sans-serif"
   },
   layout: {
     display: "grid",
     gridTemplateColumns: "3fr 1fr",
-    height: "100vh",
     gap: "16px",
+    minHeight: "100vh",
     padding: "16px",
-    boxSizing: "border-box"
+    maxWidth: "1400px",
+    margin: "0 auto"
   },
   leftPanel: {
     minWidth: 0,
     display: "grid",
-    gridTemplateRows: "auto auto 1fr auto",
-    gap: "12px",
-    overflow: "hidden"
+    gridTemplateRows: "auto auto 1fr",
+    gap: "12px"
   },
   rightPanel: {
-    minWidth: "320px",
+    minWidth: "300px",
     display: "grid",
     gridTemplateRows: "1.1fr 0.9fr",
     gap: "12px",
-    overflow: "hidden"
+    minHeight: 0
   },
   topBar: {
-    height: "64px",
+    minHeight: "72px",
     border: "1px solid #1f2937",
-    borderRadius: "16px",
-    backgroundColor: "#0f172a",
+    borderRadius: "18px",
+    backgroundColor: "#07122b",
     display: "flex",
     alignItems: "center",
     justifyContent: "space-between",
-    padding: "0 18px"
+    padding: "14px 18px",
+    gap: "16px"
+  },
+  topActions: {
+    display: "flex",
+    gap: "10px",
+    alignItems: "center",
+    flexWrap: "wrap",
+    justifyContent: "flex-end"
+  },
+  fileInput: {
+    color: "#cbd5e1",
+    fontSize: "12px"
   },
   projectTitle: {
-    fontSize: "20px",
+    fontSize: "22px",
     fontWeight: 800,
-    letterSpacing: "-0.03em"
+    color: "#f8fafc"
   },
   projectMeta: {
     marginTop: "4px",
-    color: "#94a3b8",
-    fontSize: "12px"
+    fontSize: "12px",
+    color: "#94a3b8"
   },
   message: {
     border: "1px solid #1e3a8a",
-    backgroundColor: "#0b1e3a",
-    color: "#bfdbfe",
-    borderRadius: "12px",
-    padding: "10px 14px",
-    fontSize: "13px"
+    backgroundColor: "#08204a",
+    color: "#dbeafe",
+    borderRadius: "14px",
+    padding: "12px 14px",
+    fontSize: "13px",
+    textAlign: "center",
+    fontWeight: 600
   },
-  videoArea: {
+  workspaceCard: {
     border: "1px solid #1f2937",
     borderRadius: "18px",
-    backgroundColor: "#0f172a",
+    backgroundColor: "#07122b",
+    padding: "16px",
+    minHeight: 0,
+    display: "grid",
+    gridTemplateRows: "auto 1fr",
+    gap: "14px"
+  },
+  workspaceHeader: {
     display: "flex",
-    justifyContent: "center",
-    alignItems: "center",
+    justifyContent: "space-between",
+    alignItems: "flex-end",
+    gap: "12px",
+    paddingBottom: "4px"
+  },
+  workspaceTitle: {
+    fontSize: "18px",
+    fontWeight: 800,
+    color: "#f8fafc"
+  },
+  workspaceMeta: {
+    fontSize: "12px",
+    color: "#94a3b8"
+  },
+  workspaceGrid: {
+    display: "grid",
+    gridTemplateColumns: "1.15fr 0.95fr",
+    gap: "16px",
+    alignItems: "stretch",
+    minHeight: 0
+  },
+  videoStageCard: {
+    border: "1px solid #1f2937",
+    borderRadius: "16px",
+    backgroundColor: "#081631",
+    display: "grid",
+    gridTemplateRows: "auto 1fr",
     overflow: "hidden",
     minHeight: 0
+  },
+  previewStageCard: {
+    border: "1px solid #1f2937",
+    borderRadius: "16px",
+    backgroundColor: "#081631",
+    display: "grid",
+    gridTemplateRows: "auto 1fr",
+    overflow: "hidden",
+    minHeight: 0
+  },
+  panelHeader: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    padding: "14px 16px",
+    borderBottom: "1px solid #1f2937",
+    fontWeight: 700,
+    color: "#f8fafc"
+  },
+  panelSubText: {
+    fontSize: "12px",
+    color: "#94a3b8",
+    fontWeight: 500
+  },
+  stageBody: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: "16px",
+    minHeight: 0
+  },
+  previewStageBody: {
+    display: "grid",
+    gridTemplateRows: "1fr auto",
+    gap: "14px",
+    padding: "16px",
+    minHeight: 0
+  },
+  emptyCanvas: {
+    width: "100%",
+    height: "100%",
+    minHeight: "680px",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    color: "#94a3b8"
+  },
+  uploadBlock: {
+    display: "grid",
+    gap: "16px",
+    justifyItems: "center"
+  },
+  emptyTitle: {
+    fontSize: "18px",
+    fontWeight: 700,
+    textAlign: "center"
+  },
+  uploadRow: {
+    display: "flex",
+    gap: "10px",
+    alignItems: "center",
+    flexWrap: "wrap",
+    justifyContent: "center"
   },
   videoBox: {
     position: "relative",
     width: "360px",
     height: "640px",
     border: "1px solid #334155",
+    borderRadius: "10px",
     userSelect: "none",
     overflow: "hidden",
     backgroundColor: "black",
-    boxShadow: "0 24px 70px rgba(0,0,0,0.45)"
+    boxShadow: "0 20px 48px rgba(0,0,0,0.35)"
   },
   video: {
     display: "block",
     width: "360px",
     height: "640px",
     objectFit: "cover"
-  },
-  emptyVideo: {
-    width: "100%",
-    height: "100%",
-    minHeight: "500px",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    color: "#94a3b8"
-  },
-  emptyTitle: {
-    fontSize: "18px",
-    fontWeight: 700,
-    textAlign: "center",
-    marginBottom: "16px"
-  },
-  uploadRow: {
-    display: "flex",
-    gap: "10px",
-    alignItems: "center"
   },
   subtitleBox: {
     position: "absolute",
@@ -1521,50 +1689,63 @@ const styles = {
     cursor: "nwse-resize",
     zIndex: 10
   },
-  previewPanel: {
-    border: "1px solid #1f2937",
-    borderRadius: "16px",
-    backgroundColor: "#0f172a",
-    padding: "14px",
-    minHeight: "180px"
-  },
-  sectionHeader: {
-    display: "flex",
-    justifyContent: "space-between",
-    fontWeight: 700,
-    marginBottom: "12px"
-  },
-  mutedText: {
-    color: "#94a3b8",
-    fontSize: "12px",
-    fontWeight: 500
-  },
-  outputEmpty: {
-    height: "120px",
+  previewEmpty: {
+    width: "100%",
+    height: "100%",
+    minHeight: "560px",
     border: "1px dashed #334155",
-    borderRadius: "12px",
+    borderRadius: "14px",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
     color: "#64748b",
-    fontSize: "13px"
+    fontSize: "14px",
+    textAlign: "center",
+    padding: "20px"
   },
-  outputWrap: {
+  previewVideoFrame: {
+    width: "100%",
+    minHeight: 0,
     display: "flex",
     alignItems: "center",
-    gap: "16px"
+    justifyContent: "center",
+    backgroundColor: "#030712",
+    border: "1px solid #1f2937",
+    borderRadius: "14px",
+    padding: "18px"
   },
-  outputVideo: {
-    width: "120px",
-    height: "213px",
+  previewVideo: {
+    width: "100%",
+    maxWidth: "420px",
+    aspectRatio: "9 / 16",
     objectFit: "cover",
     borderRadius: "12px",
-    backgroundColor: "black"
+    backgroundColor: "black",
+    boxShadow: "0 16px 40px rgba(0,0,0,0.35)"
   },
-  saveArea: {
+  previewActionBar: {
     display: "flex",
-    flexDirection: "column",
-    gap: "10px"
+    justifyContent: "center",
+    alignItems: "center",
+    paddingTop: "6px"
+  },
+  subtitleListPanel: {
+    border: "1px solid #1f2937",
+    borderRadius: "16px",
+    backgroundColor: "#07122b",
+    overflow: "hidden",
+    minHeight: 0,
+    display: "flex",
+    flexDirection: "column"
+  },
+  editorPanel: {
+    border: "1px solid #1f2937",
+    borderRadius: "16px",
+    backgroundColor: "#07122b",
+    overflow: "hidden",
+    minHeight: 0,
+    display: "flex",
+    flexDirection: "column"
   },
   sideHeader: {
     display: "flex",
@@ -1574,31 +1755,14 @@ const styles = {
     borderBottom: "1px solid #1f2937"
   },
   sideTitle: {
-    fontSize: "15px",
-    fontWeight: 800
+    fontSize: "16px",
+    fontWeight: 800,
+    color: "#f8fafc"
   },
   sideSubTitle: {
-    marginTop: "3px",
+    marginTop: "4px",
     color: "#94a3b8",
     fontSize: "12px"
-  },
-  subtitleListPanel: {
-    border: "1px solid #1f2937",
-    borderRadius: "16px",
-    backgroundColor: "#0f172a",
-    overflow: "hidden",
-    minHeight: 0,
-    display: "flex",
-    flexDirection: "column"
-  },
-  editorPanel: {
-    border: "1px solid #1f2937",
-    borderRadius: "16px",
-    backgroundColor: "#0f172a",
-    overflow: "hidden",
-    minHeight: 0,
-    display: "flex",
-    flexDirection: "column"
   },
   subtitleList: {
     padding: "12px",
@@ -1631,7 +1795,8 @@ const styles = {
     padding: "18px",
     color: "#64748b",
     fontSize: "13px",
-    lineHeight: "1.5"
+    lineHeight: "1.5",
+    textAlign: "center"
   },
   form: {
     padding: "14px",
@@ -1653,7 +1818,6 @@ const styles = {
   },
   input: {
     width: "100%",
-    boxSizing: "border-box",
     backgroundColor: "#020617",
     color: "#e5e7eb",
     border: "1px solid #334155",
@@ -1663,8 +1827,7 @@ const styles = {
   },
   propertyTextarea: {
     width: "100%",
-    minHeight: "78px",
-    boxSizing: "border-box",
+    minHeight: "88px",
     backgroundColor: "#020617",
     color: "#e5e7eb",
     border: "1px solid #334155",
@@ -1683,10 +1846,20 @@ const styles = {
   primaryButton: {
     border: "none",
     borderRadius: "999px",
-    padding: "10px 16px",
+    padding: "12px 18px",
     backgroundColor: "#38bdf8",
     color: "#020617",
     fontWeight: 800,
+    cursor: "pointer",
+    minWidth: "130px"
+  },
+  secondaryTopButton: {
+    border: "1px solid #334155",
+    borderRadius: "999px",
+    padding: "10px 14px",
+    backgroundColor: "#111827",
+    color: "#e5e7eb",
+    fontWeight: 700,
     cursor: "pointer"
   },
   smallButton: {
@@ -1709,21 +1882,24 @@ const styles = {
   saveButton: {
     border: "none",
     borderRadius: "12px",
-    padding: "12px 18px",
+    padding: "14px 26px",
     backgroundColor: "#22c55e",
     color: "#052e16",
     fontWeight: 900,
     cursor: "pointer",
-    width: "160px"
+    minWidth: "180px",
+    fontSize: "15px"
   },
   downloadButton: {
     display: "inline-block",
     textDecoration: "none",
     borderRadius: "12px",
-    padding: "12px 18px",
+    padding: "14px 26px",
     backgroundColor: "#22c55e",
     color: "#052e16",
-    fontWeight: 900
+    fontWeight: 900,
+    minWidth: "220px",
+    textAlign: "center"
   },
   dangerButton: {
     marginTop: "6px",
@@ -1747,6 +1923,46 @@ const styles = {
     height: "34px",
     border: "none",
     backgroundColor: "transparent"
+  },
+  overlay: {
+    position: "fixed",
+    inset: 0,
+    backgroundColor: "rgba(107, 114, 128, 0.55)",
+    backdropFilter: "blur(3px)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 9999
+  },
+  overlayCard: {
+    minWidth: "320px",
+    maxWidth: "420px",
+    padding: "28px 26px",
+    borderRadius: "18px",
+    backgroundColor: "#ffffff",
+    boxShadow: "0 20px 50px rgba(0, 0, 0, 0.2)",
+    display: "grid",
+    justifyItems: "center",
+    gap: "14px",
+    textAlign: "center"
+  },
+  spinner: {
+    width: "56px",
+    height: "56px",
+    borderRadius: "50%",
+    border: "6px solid #dbeafe",
+    borderTopColor: "#2563eb",
+    animation: "caption-editor-spin 0.9s linear infinite"
+  },
+  overlayTitle: {
+    fontSize: "20px",
+    fontWeight: 800,
+    color: "#111827"
+  },
+  overlayDescription: {
+    fontSize: "14px",
+    color: "#4b5563",
+    lineHeight: 1.6
   }
 };
 
