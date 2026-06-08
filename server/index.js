@@ -43,12 +43,22 @@ const EXTERNAL_ROOT_DIR = path.join(__dirname, "uploads", "external");
 const TMP_DIR = path.join(__dirname, "uploads", "tmp");
 
 /*
+  Render Linux 서버에서 한글 자막이 네모로 깨지는 문제를 막기 위해
+  서버 프로젝트 내부 fonts 폴더를 FFmpeg/libass에 알려줍니다.
+
+  필요한 파일:
+  server/fonts/NotoSansKR-Regular.ttf
+*/
+const FONT_DIR = path.join(__dirname, "fonts");
+
+/*
   Hilite에서 import 완료 후 열어줄 프론트 주소입니다.
-  개발 환경 예:
+
+  로컬:
   EDITOR_PUBLIC_URL=http://localhost:5173
 
-  Render 배포 환경 예:
-  EDITOR_PUBLIC_URL=https://your-caption-editor.onrender.com
+  Render:
+  EDITOR_PUBLIC_URL=https://web-editor-client.onrender.com
 */
 const EDITOR_PUBLIC_URL = process.env.EDITOR_PUBLIC_URL || "";
 
@@ -59,7 +69,8 @@ const ensureFolders = () => {
     SUBTITLE_DIR,
     OUTPUT_DIR,
     EXTERNAL_ROOT_DIR,
-    TMP_DIR
+    TMP_DIR,
+    FONT_DIR
   ];
 
   folders.forEach((folder) => {
@@ -162,11 +173,13 @@ const moveUploadedFile = (file, targetPath) => {
 const cleanupTempFiles = (files) => {
   if (!files) return;
 
-  Object.values(files).flat().forEach((file) => {
-    if (file?.path && fs.existsSync(file.path)) {
-      fs.unlinkSync(file.path);
-    }
-  });
+  Object.values(files)
+    .flat()
+    .forEach((file) => {
+      if (file?.path && fs.existsSync(file.path)) {
+        fs.unlinkSync(file.path);
+      }
+    });
 };
 
 const runFfmpeg = (args) => {
@@ -290,7 +303,7 @@ const parseSrtToSubtitles = (srtText) => {
         endTime: Number(srtTimeToSeconds(endRaw).toFixed(3)),
         fontSize: 32,
         textAlign: "center",
-        fontFamily: "Malgun Gothic",
+        fontFamily: "Noto Sans KR",
         color: "#ffffff",
         bold: true,
         italic: false
@@ -321,6 +334,28 @@ const hexToAssColor = (hexColor) => {
 
 const hasKoreanText = (text) => {
   return /[ㄱ-ㅎㅏ-ㅣ가-힣]/.test(String(text || ""));
+};
+
+/*
+  Render Linux에는 Malgun Gothic이 없습니다.
+  ASS 렌더링 단계에서는 서버에 포함한 Noto Sans KR로 강제 매핑합니다.
+*/
+const getAssFontFamily = (fontFamily) => {
+  const requestedFont = String(fontFamily || "Malgun Gothic");
+
+  if (
+    requestedFont === "Malgun Gothic" ||
+    requestedFont === "맑은 고딕" ||
+    requestedFont === "Arial" ||
+    requestedFont === "Verdana" ||
+    requestedFont === "Georgia" ||
+    requestedFont === "Times New Roman" ||
+    requestedFont === "Noto Sans KR"
+  ) {
+    return "Noto Sans KR";
+  }
+
+  return "Noto Sans KR";
 };
 
 const getCssFontSize = (subtitle) => {
@@ -468,7 +503,7 @@ const createDialogueLine = (subtitle, lineText, lineIndex) => {
   const fontSize = getEffectiveFontSize(subtitle);
   const alignment = getAssAlignment(subtitle.textAlign);
 
-  const fontFamily = subtitle.fontFamily || "Malgun Gothic";
+  const fontFamily = getAssFontFamily(subtitle.fontFamily);
   const color = hexToAssColor(subtitle.color || "#ffffff");
   const bold = subtitle.bold === false ? 0 : 1;
   const italic = subtitle.italic ? 1 : 0;
@@ -499,7 +534,7 @@ PlayResY: ${EDITOR_HEIGHT}
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,Malgun Gothic,32,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,0,0,8,0,0,0,1
+Style: Default,Noto Sans KR,32,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,0,0,8,0,0,0,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -564,7 +599,9 @@ const pushRenderedVideoToCallback = async ({
   }
 
   if (typeof fetch !== "function" || typeof FormData !== "function") {
-    throw new Error("현재 Node 버전에서 fetch/FormData를 사용할 수 없습니다. Node 18 이상을 사용하세요.");
+    throw new Error(
+      "현재 Node 버전에서 fetch/FormData를 사용할 수 없습니다. Node 18 이상을 사용하세요."
+    );
   }
 
   const fileBuffer = fs.readFileSync(outputPath);
@@ -614,7 +651,9 @@ const readMeta = (sessionDir) => {
 };
 
 const cleanupOldExternalSessions = () => {
-  const maxAgeMs = Number(process.env.EXTERNAL_SESSION_MAX_AGE_MS || 24 * 60 * 60 * 1000);
+  const maxAgeMs = Number(
+    process.env.EXTERNAL_SESSION_MAX_AGE_MS || 24 * 60 * 60 * 1000
+  );
 
   if (!fs.existsSync(EXTERNAL_ROOT_DIR)) {
     return;
@@ -622,39 +661,41 @@ const cleanupOldExternalSessions = () => {
 
   const now = Date.now();
 
-  fs.readdirSync(EXTERNAL_ROOT_DIR, { withFileTypes: true }).forEach((dirent) => {
-    if (!dirent.isDirectory()) {
-      return;
-    }
+  fs.readdirSync(EXTERNAL_ROOT_DIR, { withFileTypes: true }).forEach(
+    (dirent) => {
+      if (!dirent.isDirectory()) {
+        return;
+      }
 
-    const sessionDir = path.join(EXTERNAL_ROOT_DIR, dirent.name);
-    const metaPath = path.join(sessionDir, "meta.json");
+      const sessionDir = path.join(EXTERNAL_ROOT_DIR, dirent.name);
+      const metaPath = path.join(sessionDir, "meta.json");
 
-    try {
-      if (!fs.existsSync(metaPath)) {
-        const stat = fs.statSync(sessionDir);
+      try {
+        if (!fs.existsSync(metaPath)) {
+          const stat = fs.statSync(sessionDir);
 
-        if (now - stat.mtimeMs > maxAgeMs) {
-          safeRemoveDir(sessionDir);
+          if (now - stat.mtimeMs > maxAgeMs) {
+            safeRemoveDir(sessionDir);
+          }
+
+          return;
         }
 
-        return;
-      }
+        const meta = JSON.parse(fs.readFileSync(metaPath, "utf8"));
+        const createdAtMs = new Date(meta.createdAt || 0).getTime();
 
-      const meta = JSON.parse(fs.readFileSync(metaPath, "utf8"));
-      const createdAtMs = new Date(meta.createdAt || 0).getTime();
+        if (Number.isNaN(createdAtMs)) {
+          return;
+        }
 
-      if (Number.isNaN(createdAtMs)) {
-        return;
+        if (now - createdAtMs > maxAgeMs) {
+          safeRemoveDir(sessionDir);
+        }
+      } catch (error) {
+        console.error("오래된 external session 정리 실패:", error);
       }
-
-      if (now - createdAtMs > maxAgeMs) {
-        safeRemoveDir(sessionDir);
-      }
-    } catch (error) {
-      console.error("오래된 external session 정리 실패:", error);
     }
-  });
+  );
 };
 
 setInterval(cleanupOldExternalSessions, 60 * 60 * 1000);
@@ -927,16 +968,19 @@ app.post("/api/render", async (req, res) => {
     fs.writeFileSync(subtitlePath, assContent, "utf8");
 
     const subtitleForFfmpeg = escapeFfmpegFilterPath(subtitlePath);
+    const fontsDirForFfmpeg = escapeFfmpegFilterPath(FONT_DIR);
 
     /*
       좌표 안정성을 위해 360x640으로 먼저 맞춘 뒤 ASS를 입히고,
       마지막에 720x1280으로 확대합니다.
-      이 구조가 프론트 360x640 편집 좌표와 가장 논리적으로 맞습니다.
+
+      fontsdir 옵션으로 server/fonts 안의 NotoSansKR-Regular.ttf를
+      FFmpeg/libass가 찾을 수 있게 합니다.
     */
     const videoFilter = [
       `scale=${EDITOR_WIDTH}:${EDITOR_HEIGHT}:force_original_aspect_ratio=increase`,
       `crop=${EDITOR_WIDTH}:${EDITOR_HEIGHT}`,
-      `ass='${subtitleForFfmpeg}'`,
+      `ass='${subtitleForFfmpeg}':fontsdir='${fontsDirForFfmpeg}'`,
       `scale=${OUTPUT_WIDTH}:${OUTPUT_HEIGHT}`
     ].join(",");
 
