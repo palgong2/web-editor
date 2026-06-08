@@ -43,6 +43,34 @@ const log = (...args) => {
   console.log(new Date().toISOString(), ...args);
 };
 
+const sanitizeOutputFilename = (value) => {
+  const raw = String(value || "edited-video").trim();
+
+  const cleaned = raw
+    .replace(/[\\/:*?"<>|]/g, "_")
+    .replace(/\s+/g, "_");
+
+  if (!cleaned) {
+    return "edited-video.mp4";
+  }
+
+  if (cleaned.toLowerCase().endsWith(".mp4")) {
+    return cleaned;
+  }
+
+  return `${cleaned}.mp4`;
+};
+
+const sanitizeSaveTitle = (value) => {
+  const raw = String(value || "edited-video").trim();
+
+  if (!raw) {
+    return "edited-video";
+  }
+
+  return raw.slice(0, 120);
+};
+
 const ensureFolders = () => {
   const folders = [
     path.join(__dirname, "uploads"),
@@ -286,7 +314,7 @@ const parseSrtToSubtitles = (srtText) => {
         textAlign: "center",
         fontFamily: "Noto Sans KR",
         color: "#ffffff",
-        bold: true,
+        bold: false,
         italic: false
       };
     })
@@ -468,12 +496,10 @@ const createDialogueLine = (subtitle, lineText, lineIndex) => {
 
   const fontFamily = getAssFontFamily(subtitle.fontFamily);
   const color = hexToAssColor(subtitle.color || "#ffffff");
-  const bold = subtitle.bold === false ? 0 : 1;
-  const italic = subtitle.italic ? 1 : 0;
 
   return `Dialogue: 0,${secondsToAssTime(start)},${secondsToAssTime(
     end
-  )},Default,,0,0,0,,{\\an${alignment}\\pos(${x},${lineY})\\fs${fontSize}\\fn${fontFamily}\\c${color}\\b${bold}\\i${italic}\\bord0\\shad0\\q2}${lineText}`;
+  )},Default,,0,0,0,,{\\an${alignment}\\pos(${x},${lineY})\\fs${fontSize}\\fn${fontFamily}\\c${color}\\b0\\i0\\bord0\\shad0\\q2}${lineText}`;
 };
 
 const createAssSubtitle = (subtitles) => {
@@ -482,7 +508,15 @@ const createAssSubtitle = (subtitles) => {
       const lines = getSubtitleLinesForAss(subtitle);
 
       return lines.map((lineText, lineIndex) =>
-        createDialogueLine(subtitle, lineText, lineIndex)
+        createDialogueLine(
+          {
+            ...subtitle,
+            bold: false,
+            italic: false
+          },
+          lineText,
+          lineIndex
+        )
       );
     })
     .join("\n");
@@ -497,7 +531,7 @@ PlayResY: ${EDITOR_HEIGHT}
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,Noto Sans KR,32,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,0,0,8,0,0,0,1
+Style: Default,Noto Sans KR,32,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,8,0,0,0,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -576,7 +610,9 @@ const pushRenderedVideoToCallback = async ({
   callbackUrl,
   jobId,
   sessionId,
-  outputPath
+  outputPath,
+  saveTitle,
+  saveFilename
 }) => {
   if (!callbackUrl) {
     return {
@@ -595,6 +631,14 @@ const pushRenderedVideoToCallback = async ({
     );
   }
 
+  const finalSaveTitle = sanitizeSaveTitle(
+    saveTitle || jobId || sessionId || "edited-video"
+  );
+
+  const finalSaveFilename = sanitizeOutputFilename(
+    saveFilename || finalSaveTitle
+  );
+
   const fileBuffer = fs.readFileSync(outputPath);
   const blob = new Blob([fileBuffer], {
     type: "video/mp4"
@@ -603,7 +647,11 @@ const pushRenderedVideoToCallback = async ({
   const formData = new FormData();
   formData.append("jobId", jobId || "");
   formData.append("sessionId", sessionId || "");
-  formData.append("video", blob, "edited-video.mp4");
+  formData.append("saveTitle", finalSaveTitle);
+  formData.append("title", finalSaveTitle);
+  formData.append("saveFilename", finalSaveFilename);
+  formData.append("filename", finalSaveFilename);
+  formData.append("video", blob, finalSaveFilename);
 
   const response = await fetch(callbackUrl, {
     method: "POST",
@@ -619,7 +667,9 @@ const pushRenderedVideoToCallback = async ({
 
   return {
     skipped: false,
-    message: "callback push 성공"
+    message: "callback push 성공",
+    saveTitle: finalSaveTitle,
+    saveFilename: finalSaveFilename
   };
 };
 
@@ -726,7 +776,7 @@ app.post(
     let sessionDir = null;
 
     try {
-      const { jobId, callbackUrl } = req.body;
+      const { jobId, callbackUrl, title, topic } = req.body;
 
       const videoFile = req.files?.video?.[0];
       const voiceFile = req.files?.voice?.[0];
@@ -735,6 +785,7 @@ app.post(
       log("[external/import] 요청 수신");
       log("[external/import] jobId:", jobId);
       log("[external/import] callbackUrl:", callbackUrl || "(empty)");
+      log("[external/import] title:", title || topic || "(empty)");
       log("[external/import] files:", {
         video: videoFile?.originalname,
         voice: voiceFile?.originalname || "(not provided)",
@@ -801,6 +852,8 @@ app.post(
         sessionId,
         jobId,
         callbackUrl: callbackUrl || "",
+        title: sanitizeSaveTitle(title || topic || jobId),
+        topic: sanitizeSaveTitle(topic || title || jobId),
         createdAt: new Date().toISOString(),
         status: "imported",
         importMode: voiceFile ? "video_voice_srt" : "video_with_voice_srt"
@@ -819,6 +872,8 @@ app.post(
         message: "외부 편집 세션 생성 완료",
         sessionId,
         jobId,
+        title: meta.title,
+        topic: meta.topic,
         importMode: meta.importMode,
         editorUrl
       });
@@ -882,6 +937,7 @@ app.get("/api/external/session/:sessionId", (req, res) => {
     log("[external/session] 조회 성공:", {
       sessionId,
       jobId: meta.jobId,
+      title: meta.title,
       subtitles: subtitles.length
     });
 
@@ -889,6 +945,8 @@ app.get("/api/external/session/:sessionId", (req, res) => {
       message: "외부 편집 세션 조회 성공",
       sessionId,
       jobId: meta.jobId,
+      title: meta.title || meta.topic || meta.jobId,
+      topic: meta.topic || meta.title || meta.jobId,
       videoUrl,
       subtitles
     });
@@ -908,13 +966,24 @@ app.post("/api/render", async (req, res) => {
   let sessionDirForCleanup = null;
 
   try {
-    const { filename, sessionId, subtitles, mode, useExistingOutput } = req.body;
+    const {
+      filename,
+      sessionId,
+      subtitles,
+      mode,
+      useExistingOutput,
+      saveTitle,
+      saveFilename
+    } = req.body;
+
     const renderMode = mode || "save";
 
     log("[render] 요청 수신");
     log("[render] mode:", renderMode);
     log("[render] sessionId:", sessionId || "(direct upload)");
     log("[render] filename:", filename || "(external mode)");
+    log("[render] saveTitle:", saveTitle || "(default)");
+    log("[render] saveFilename:", saveFilename || "(default)");
     log(
       "[render] subtitles count:",
       Array.isArray(subtitles) ? subtitles.length : 0
@@ -969,6 +1038,12 @@ app.post("/api/render", async (req, res) => {
       writeMeta(sessionDir, {
         ...externalMeta,
         status: renderMode === "preview" ? "preview_rendering" : "saving",
+        saveTitle: sanitizeSaveTitle(
+          saveTitle || externalMeta.title || externalMeta.jobId
+        ),
+        saveFilename: sanitizeOutputFilename(
+          saveFilename || saveTitle || externalMeta.title || externalMeta.jobId
+        ),
         renderingStartedAt: new Date().toISOString()
       });
     } else {
@@ -1006,7 +1081,13 @@ app.post("/api/render", async (req, res) => {
     );
 
     if (shouldRunFfmpeg) {
-      const assContent = createAssSubtitle(subtitles);
+      const normalizedSubtitles = subtitles.map((subtitle) => ({
+        ...subtitle,
+        bold: false,
+        italic: false
+      }));
+
+      const assContent = createAssSubtitle(normalizedSubtitles);
       fs.writeFileSync(subtitlePath, assContent, "utf8");
 
       const subtitleForFfmpeg = escapeFfmpegFilterPath(subtitlePath);
@@ -1056,6 +1137,14 @@ app.post("/api/render", async (req, res) => {
     if (isExternalMode) {
       outputUrl = `${getPublicBaseUrl(req)}/uploads/external/${sessionId}/output/${outputFilename}?t=${Date.now()}`;
 
+      const finalSaveTitle = sanitizeSaveTitle(
+        saveTitle || externalMeta.title || externalMeta.jobId || "edited-video"
+      );
+
+      const finalSaveFilename = sanitizeOutputFilename(
+        saveFilename || finalSaveTitle
+      );
+
       if (renderMode === "preview") {
         console.timeEnd("[render] total");
 
@@ -1063,6 +1152,8 @@ app.post("/api/render", async (req, res) => {
           message: "결과 미리보기 생성 완료",
           sessionId,
           jobId: externalMeta.jobId,
+          saveTitle: finalSaveTitle,
+          saveFilename: finalSaveFilename,
           externalMode: true,
           previewOnly: true,
           outputUrl,
@@ -1077,7 +1168,9 @@ app.post("/api/render", async (req, res) => {
         callbackUrl: externalMeta.callbackUrl,
         jobId: externalMeta.jobId,
         sessionId,
-        outputPath
+        outputPath,
+        saveTitle: finalSaveTitle,
+        saveFilename: finalSaveFilename
       });
 
       console.timeEnd("[render] callback");
@@ -1096,6 +1189,8 @@ app.post("/api/render", async (req, res) => {
           : "저장 완료. 원본 시스템으로 결과 영상을 전송했습니다.",
         sessionId,
         jobId: externalMeta.jobId,
+        saveTitle: finalSaveTitle,
+        saveFilename: finalSaveFilename,
         externalMode: true,
         shouldClose: !callbackResult.skipped,
         callbackResult

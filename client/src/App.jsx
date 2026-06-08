@@ -14,11 +14,13 @@ function App() {
 
   const [externalMode, setExternalMode] = useState(false);
   const [sessionId, setSessionId] = useState("");
-  const [jobId, setJobId] = useState("");
 
   const [rendering, setRendering] = useState(false);
   const [saving, setSaving] = useState(false);
   const [outputUrl, setOutputUrl] = useState("");
+
+  const [saveTitle, setSaveTitle] = useState("edited-video");
+  const [saveFilename, setSaveFilename] = useState("edited-video.mp4");
 
   const [currentTime, setCurrentTime] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -53,6 +55,53 @@ function App() {
   const selectedSubtitle = subtitles.find(
     (subtitle) => subtitle.id === selectedSubtitleId
   );
+
+  const sortedSubtitles = [...subtitles].sort((a, b) => {
+    const startDiff = Number(a.startTime || 0) - Number(b.startTime || 0);
+
+    if (startDiff !== 0) {
+      return startDiff;
+    }
+
+    const endDiff = Number(a.endTime || 0) - Number(b.endTime || 0);
+
+    if (endDiff !== 0) {
+      return endDiff;
+    }
+
+    return Number(a.id || 0) - Number(b.id || 0);
+  });
+
+  const sanitizeFilename = (value) => {
+    const raw = String(value || "edited-video").trim();
+
+    const cleaned = raw
+      .replace(/[\\/:*?"<>|]/g, "_")
+      .replace(/\s+/g, "_");
+
+    if (!cleaned) {
+      return "edited-video.mp4";
+    }
+
+    if (cleaned.toLowerCase().endsWith(".mp4")) {
+      return cleaned;
+    }
+
+    return `${cleaned}.mp4`;
+  };
+
+  const titleToFilename = (title) => {
+    return sanitizeFilename(title || "edited-video");
+  };
+
+  const normalizeSubtitleStyle = (subtitle) => {
+    return {
+      ...subtitle,
+      bold: false,
+      italic: false,
+      fontFamily: subtitle.fontFamily || "Noto Sans KR"
+    };
+  };
 
   const clearPropertyPanel = () => {
     setPropertyInputs({});
@@ -158,16 +207,24 @@ function App() {
         return;
       }
 
+      const normalizedSubtitles = (data.subtitles || []).map(
+        normalizeSubtitleStyle
+      );
+
+      const defaultTitle =
+        data.title || data.topic || data.jobId || data.sessionId || "edited-video";
+
       setExternalMode(true);
       setSessionId(data.sessionId);
-      setJobId(data.jobId || "");
       setVideoUrl(data.videoUrl);
       setFilename("");
       setSelectedFile(null);
       setCurrentTime(0);
       setIsPlaying(false);
       setOutputUrl("");
-      setSubtitles(data.subtitles || []);
+      setSaveTitle(defaultTitle);
+      setSaveFilename(titleToFilename(defaultTitle));
+      setSubtitles(normalizedSubtitles);
       setSelectedSubtitleId(null);
       setEditingSubtitleId(null);
       setEditingText("");
@@ -248,13 +305,14 @@ function App() {
 
       setExternalMode(false);
       setSessionId("");
-      setJobId("");
       setMessage(data.message);
       setVideoUrl(data.videoUrl);
       setFilename(data.filename);
       setCurrentTime(0);
       setIsPlaying(false);
       setOutputUrl("");
+      setSaveTitle("edited-video");
+      setSaveFilename("edited-video.mp4");
       setSubtitles([]);
       setSelectedSubtitleId(null);
       setEditingSubtitleId(null);
@@ -279,7 +337,7 @@ function App() {
       textAlign: "center",
       fontFamily: "Noto Sans KR",
       color: "#ffffff",
-      bold: true,
+      bold: false,
       italic: false
     };
 
@@ -298,10 +356,10 @@ function App() {
           return subtitle;
         }
 
-        return {
+        return normalizeSubtitleStyle({
           ...subtitle,
           [field]: value
-        };
+        });
       })
     );
   };
@@ -313,10 +371,10 @@ function App() {
       return;
     }
 
-    const merged = {
+    const merged = normalizeSubtitleStyle({
       ...targetSubtitle,
       ...nextValues
-    };
+    });
 
     const safeWidth = Number.isNaN(Number(merged.width))
       ? targetSubtitle.width
@@ -364,7 +422,7 @@ function App() {
     const limitedStartTime = Math.max(0, safeStartTime);
     const limitedEndTime = Math.max(limitedStartTime + 0.1, safeEndTime);
 
-    const updated = {
+    const updated = normalizeSubtitleStyle({
       ...merged,
       x: Math.round(limitedX),
       y: Math.round(limitedY),
@@ -373,7 +431,7 @@ function App() {
       fontSize: Math.round(limitedFontSize),
       startTime: Number(limitedStartTime.toFixed(3)),
       endTime: Number(limitedEndTime.toFixed(3))
-    };
+    });
 
     setSubtitles((prevSubtitles) =>
       prevSubtitles.map((subtitle) => {
@@ -412,10 +470,10 @@ function App() {
       return;
     }
 
-    const nextSubtitle = {
+    const nextSubtitle = normalizeSubtitleStyle({
       ...selectedSubtitle,
       text: propertyText
-    };
+    });
 
     const nextFontSize = getAutoFitFontSize(
       nextSubtitle,
@@ -682,11 +740,11 @@ function App() {
         Math.min(nextHeight, maxHeight)
       );
 
-      const nextSubtitle = {
+      const nextSubtitle = normalizeSubtitleStyle({
         ...targetSubtitle,
         width: limitedNextWidth,
         height: limitedNextHeight
-      };
+      });
 
       const nextFontSize = getAutoFitFontSize(
         nextSubtitle,
@@ -712,21 +770,23 @@ function App() {
 
   const getSubtitlesForRender = () => {
     return subtitles.map((subtitle) => {
+      let nextSubtitle = normalizeSubtitleStyle(subtitle);
+
       if (subtitle.id === editingSubtitleId) {
-        return {
-          ...subtitle,
+        nextSubtitle = {
+          ...nextSubtitle,
           text: editingText
         };
       }
 
       if (subtitle.id === selectedSubtitleId) {
-        return {
-          ...subtitle,
+        nextSubtitle = {
+          ...nextSubtitle,
           text: propertyText || subtitle.text
         };
       }
 
-      return subtitle;
+      return normalizeSubtitleStyle(nextSubtitle);
     });
   };
 
@@ -762,6 +822,8 @@ function App() {
           mode: "preview",
           filename: externalMode ? undefined : filename,
           sessionId: externalMode ? sessionId : undefined,
+          saveTitle: saveTitle.trim() || "edited-video",
+          saveFilename: sanitizeFilename(saveFilename),
           subtitles: renderSubtitles
         })
       });
@@ -802,6 +864,9 @@ function App() {
       return;
     }
 
+    const finalSaveTitle = saveTitle.trim() || "edited-video";
+    const finalSaveFilename = sanitizeFilename(saveFilename || finalSaveTitle);
+
     try {
       setSaving(true);
       setMessage("원본 시스템으로 저장 중입니다.");
@@ -815,6 +880,8 @@ function App() {
           mode: "save",
           useExistingOutput: true,
           sessionId,
+          saveTitle: finalSaveTitle,
+          saveFilename: finalSaveFilename,
           subtitles: renderSubtitles
         })
       });
@@ -893,7 +960,11 @@ function App() {
             <div style={styles.uploadBlock}>
               <div style={styles.emptyTitle}>MP4 영상을 업로드하세요</div>
               <div style={styles.uploadRow}>
-                <input type="file" accept="video/mp4" onChange={handleFileChange} />
+                <input
+                  type="file"
+                  accept="video/mp4"
+                  onChange={handleFileChange}
+                />
                 <button style={styles.primaryButton} onClick={uploadVideo}>
                   영상 업로드
                 </button>
@@ -995,10 +1066,10 @@ function App() {
                   onClick={(event) => event.stopPropagation()}
                   onMouseDown={(event) => event.stopPropagation()}
                   onBlur={() => {
-                    const nextSubtitle = {
+                    const nextSubtitle = normalizeSubtitleStyle({
                       ...subtitle,
                       text: editingText
-                    };
+                    });
 
                     const nextFontSize = getAutoFitFontSize(
                       nextSubtitle,
@@ -1019,8 +1090,8 @@ function App() {
                     ...styles.subtitleTextArea,
                     color: subtitle.color || "#ffffff",
                     fontSize: `${subtitle.fontSize}px`,
-                    fontWeight: subtitle.bold ? "bold" : "normal",
-                    fontStyle: subtitle.italic ? "italic" : "normal",
+                    fontWeight: "normal",
+                    fontStyle: "normal",
                     textAlign: subtitle.textAlign,
                     fontFamily: subtitle.fontFamily || "Noto Sans KR"
                   }}
@@ -1031,8 +1102,8 @@ function App() {
                     ...styles.subtitleText,
                     color: subtitle.color || "#ffffff",
                     fontSize: `${subtitle.fontSize}px`,
-                    fontWeight: subtitle.bold ? "bold" : "normal",
-                    fontStyle: subtitle.italic ? "italic" : "normal",
+                    fontWeight: "normal",
+                    fontStyle: "normal",
                     textAlign: subtitle.textAlign,
                     fontFamily: subtitle.fontFamily || "Noto Sans KR"
                   }}
@@ -1077,6 +1148,12 @@ function App() {
     <div style={styles.page}>
       <style>{`
         * { box-sizing: border-box; }
+        html, body, #root {
+          margin: 0;
+          width: 100%;
+          height: 100%;
+          overflow: hidden;
+        }
         @keyframes caption-editor-spin {
           0% { transform: rotate(0deg); }
           100% { transform: rotate(360deg); }
@@ -1087,30 +1164,10 @@ function App() {
 
       <main style={styles.layout}>
         <section style={styles.leftPanel}>
-          <div style={styles.topBar}>
-            <div>
-              <div style={styles.projectTitle}>Caption Editor</div>
-              <div style={styles.projectMeta}>
-                {externalMode ? `JOB ${jobId || "-"}` : "Direct Upload Mode"} ·{" "}
-                {currentTime.toFixed(1)}s
-              </div>
-            </div>
+          {message && <div style={styles.message}>{message}</div>}
 
-            <div style={styles.topActions}>
-              {!externalMode && !videoUrl && (
-                <>
-                  <input
-                    type="file"
-                    accept="video/mp4"
-                    onChange={handleFileChange}
-                    style={styles.fileInput}
-                  />
-                  <button style={styles.secondaryTopButton} onClick={uploadVideo}>
-                    영상 업로드
-                  </button>
-                </>
-              )}
-
+          <div style={styles.workspaceCard}>
+            <div style={styles.workspaceToolbar}>
               <button
                 onClick={previewVideo}
                 disabled={rendering || !videoUrl}
@@ -1121,34 +1178,33 @@ function App() {
               >
                 {rendering ? "미리보기 생성 중..." : "결과 미리보기"}
               </button>
-            </div>
-          </div>
 
-          {message && <div style={styles.message}>{message}</div>}
-
-          <div style={styles.workspaceCard}>
-            <div style={styles.workspaceHeader}>
-              <div style={styles.workspaceTitle}>편집 작업공간</div>
-              <div style={styles.workspaceMeta}>
-                왼쪽은 원본 편집, 오른쪽은 결과 미리보기입니다
-              </div>
+              {!externalMode && !videoUrl && (
+                <div style={styles.uploadMiniRow}>
+                  <input
+                    type="file"
+                    accept="video/mp4"
+                    onChange={handleFileChange}
+                    style={styles.fileInput}
+                  />
+                  <button
+                    style={styles.secondaryTopButton}
+                    onClick={uploadVideo}
+                  >
+                    영상 업로드
+                  </button>
+                </div>
+              )}
             </div>
 
             <div style={styles.workspaceGrid}>
               <div style={styles.videoStageCard}>
-                <div style={styles.panelHeader}>
-                  <span>원본 영상</span>
-                  <span style={styles.panelSubText}>360×640 편집 기준</span>
-                </div>
-
+                <div style={styles.stageTitle}>원본 영상</div>
                 <div style={styles.stageBody}>{renderVideoCanvas()}</div>
               </div>
 
               <div style={styles.previewStageCard}>
-                <div style={styles.panelHeader}>
-                  <span>결과 미리보기</span>
-                  <span style={styles.panelSubText}>720×1280 출력 기준</span>
-                </div>
+                <div style={styles.stageTitle}>결과 미리보기</div>
 
                 <div style={styles.previewStageBody}>
                   {!outputUrl && (
@@ -1169,18 +1225,59 @@ function App() {
 
                       <div style={styles.previewActionBar}>
                         {externalMode ? (
-                          <button
-                            onClick={saveFinalVideo}
-                            disabled={saving}
-                            style={{
-                              ...styles.saveButton,
-                              opacity: saving ? 0.55 : 1
-                            }}
-                          >
-                            {saving ? "저장 중..." : "저장"}
-                          </button>
+                          <>
+                            <div style={styles.saveMetaBox}>
+                              <label style={styles.saveMetaLabel}>저장 제목</label>
+                              <input
+                                type="text"
+                                value={saveTitle}
+                                onChange={(event) => {
+                                  const nextTitle = event.target.value;
+                                  setSaveTitle(nextTitle);
+                                  setSaveFilename(titleToFilename(nextTitle));
+                                }}
+                                onBlur={() => {
+                                  const nextTitle =
+                                    saveTitle.trim() || "edited-video";
+                                  setSaveTitle(nextTitle);
+                                  setSaveFilename(titleToFilename(nextTitle));
+                                }}
+                                style={styles.saveMetaInput}
+                              />
+                            </div>
+
+                            <div style={styles.saveMetaBox}>
+                              <label style={styles.saveMetaLabel}>저장 파일명</label>
+                              <input
+                                type="text"
+                                value={saveFilename}
+                                onChange={(event) =>
+                                  setSaveFilename(event.target.value)
+                                }
+                                onBlur={() =>
+                                  setSaveFilename(sanitizeFilename(saveFilename))
+                                }
+                                style={styles.saveMetaInput}
+                              />
+                            </div>
+
+                            <button
+                              onClick={saveFinalVideo}
+                              disabled={saving}
+                              style={{
+                                ...styles.saveButton,
+                                opacity: saving ? 0.55 : 1
+                              }}
+                            >
+                              {saving ? "저장 중..." : "저장"}
+                            </button>
+                          </>
                         ) : (
-                          <a href={outputUrl} download style={styles.downloadButton}>
+                          <a
+                            href={outputUrl}
+                            download
+                            style={styles.downloadButton}
+                          >
                             결과 영상 다운로드
                           </a>
                         )}
@@ -1211,11 +1308,11 @@ function App() {
             </div>
 
             <div style={styles.subtitleList}>
-              {subtitles.length === 0 && (
+              {sortedSubtitles.length === 0 && (
                 <div style={styles.emptySideText}>자막이 없습니다.</div>
               )}
 
-              {subtitles.map((subtitle, index) => (
+              {sortedSubtitles.map((subtitle, index) => (
                 <button
                   key={subtitle.id}
                   onClick={() => {
@@ -1255,7 +1352,7 @@ function App() {
 
             {!selectedSubtitle && (
               <div style={styles.emptySideText}>
-                오른쪽 위 자막 목록에서 항목을 선택하면 이 영역에서 편집할 수 있습니다.
+                위쪽 자막 목록에서 항목을 선택하면 이 영역에서 편집할 수 있습니다.
               </div>
             )}
 
@@ -1287,11 +1384,11 @@ function App() {
                     {renderNumberInput("height")}
                   </div>
                   <div>
-                    <label style={styles.label}>시작 시간</label>
+                    <label style={styles.label}>시작</label>
                     {renderNumberInput("startTime")}
                   </div>
                   <div>
-                    <label style={styles.label}>종료 시간</label>
+                    <label style={styles.label}>종료</label>
                     {renderNumberInput("endTime")}
                   </div>
                 </div>
@@ -1385,38 +1482,6 @@ function App() {
                       style={styles.colorInput}
                     />
                   </label>
-
-                  <button
-                    onClick={() =>
-                      updateSubtitle(
-                        selectedSubtitle.id,
-                        "bold",
-                        !selectedSubtitle.bold
-                      )
-                    }
-                    style={{
-                      ...styles.secondaryButton,
-                      borderColor: selectedSubtitle.bold ? "#38bdf8" : "#334155"
-                    }}
-                  >
-                    굵게
-                  </button>
-
-                  <button
-                    onClick={() =>
-                      updateSubtitle(
-                        selectedSubtitle.id,
-                        "italic",
-                        !selectedSubtitle.italic
-                      )
-                    }
-                    style={{
-                      ...styles.secondaryButton,
-                      borderColor: selectedSubtitle.italic ? "#38bdf8" : "#334155"
-                    }}
-                  >
-                    기울임
-                  </button>
                 </div>
 
                 <button
@@ -1436,159 +1501,136 @@ function App() {
 
 const styles = {
   page: {
-    minHeight: "100vh",
+    width: "100vw",
+    height: "100vh",
+    overflow: "hidden",
     backgroundColor: "#e5e7eb",
     color: "#e5e7eb",
     fontFamily:
       "Noto Sans KR, Malgun Gothic, system-ui, -apple-system, BlinkMacSystemFont, sans-serif"
   },
   layout: {
+    width: "100%",
+    height: "100%",
     display: "grid",
-    gridTemplateColumns: "3fr 1fr",
-    gap: "16px",
-    minHeight: "100vh",
-    padding: "16px",
-    maxWidth: "1400px",
-    margin: "0 auto"
+    gridTemplateColumns: "4fr 1fr",
+    gap: "12px",
+    padding: "12px"
   },
   leftPanel: {
     minWidth: 0,
-    display: "grid",
-    gridTemplateRows: "auto auto 1fr",
-    gap: "12px"
+    minHeight: 0,
+    position: "relative",
+    overflow: "hidden"
   },
   rightPanel: {
-    minWidth: "300px",
+    minWidth: "280px",
+    minHeight: 0,
     display: "grid",
-    gridTemplateRows: "1.1fr 0.9fr",
+    gridTemplateRows: "1fr 1fr",
     gap: "12px",
-    minHeight: 0
+    overflow: "hidden"
   },
-  topBar: {
-    minHeight: "72px",
+  message: {
+    position: "absolute",
+    left: "16px",
+    top: "16px",
+    zIndex: 20,
+    maxWidth: "420px",
+    border: "1px solid #1e3a8a",
+    backgroundColor: "rgba(8, 32, 74, 0.95)",
+    color: "#dbeafe",
+    borderRadius: "999px",
+    padding: "9px 14px",
+    fontSize: "12px",
+    fontWeight: 700,
+    boxShadow: "0 12px 28px rgba(0,0,0,0.25)"
+  },
+  workspaceCard: {
+    width: "100%",
+    height: "100%",
     border: "1px solid #1f2937",
     borderRadius: "18px",
     backgroundColor: "#07122b",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    padding: "14px 18px",
-    gap: "16px"
-  },
-  topActions: {
-    display: "flex",
+    padding: "12px",
+    display: "grid",
+    gridTemplateRows: "auto 1fr",
     gap: "10px",
+    overflow: "hidden"
+  },
+  workspaceToolbar: {
+    display: "flex",
+    justifyContent: "flex-end",
     alignItems: "center",
-    flexWrap: "wrap",
-    justifyContent: "flex-end"
+    minHeight: "44px",
+    gap: "10px"
+  },
+  uploadMiniRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: "8px"
   },
   fileInput: {
     color: "#cbd5e1",
     fontSize: "12px"
   },
-  projectTitle: {
-    fontSize: "22px",
-    fontWeight: 800,
-    color: "#f8fafc"
-  },
-  projectMeta: {
-    marginTop: "4px",
-    fontSize: "12px",
-    color: "#94a3b8"
-  },
-  message: {
-    border: "1px solid #1e3a8a",
-    backgroundColor: "#08204a",
-    color: "#dbeafe",
-    borderRadius: "14px",
-    padding: "12px 14px",
-    fontSize: "13px",
-    textAlign: "center",
-    fontWeight: 600
-  },
-  workspaceCard: {
-    border: "1px solid #1f2937",
-    borderRadius: "18px",
-    backgroundColor: "#07122b",
-    padding: "16px",
+  workspaceGrid: {
     minHeight: 0,
     display: "grid",
-    gridTemplateRows: "auto 1fr",
-    gap: "14px"
-  },
-  workspaceHeader: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "flex-end",
+    gridTemplateColumns: "1fr 1fr",
     gap: "12px",
-    paddingBottom: "4px"
+    overflow: "hidden"
   },
-  workspaceTitle: {
-    fontSize: "18px",
+  videoStageCard: {
+    minWidth: 0,
+    minHeight: 0,
+    border: "1px solid #1f2937",
+    borderRadius: "14px",
+    backgroundColor: "#081631",
+    display: "grid",
+    gridTemplateRows: "auto 1fr",
+    overflow: "hidden"
+  },
+  previewStageCard: {
+    minWidth: 0,
+    minHeight: 0,
+    border: "1px solid #1f2937",
+    borderRadius: "14px",
+    backgroundColor: "#081631",
+    display: "grid",
+    gridTemplateRows: "auto 1fr",
+    overflow: "hidden"
+  },
+  stageTitle: {
+    height: "40px",
+    display: "flex",
+    alignItems: "center",
+    padding: "0 14px",
+    borderBottom: "1px solid #1f2937",
+    fontSize: "15px",
     fontWeight: 800,
     color: "#f8fafc"
   },
-  workspaceMeta: {
-    fontSize: "12px",
-    color: "#94a3b8"
-  },
-  workspaceGrid: {
-    display: "grid",
-    gridTemplateColumns: "1.15fr 0.95fr",
-    gap: "16px",
-    alignItems: "stretch",
-    minHeight: 0
-  },
-  videoStageCard: {
-    border: "1px solid #1f2937",
-    borderRadius: "16px",
-    backgroundColor: "#081631",
-    display: "grid",
-    gridTemplateRows: "auto 1fr",
-    overflow: "hidden",
-    minHeight: 0
-  },
-  previewStageCard: {
-    border: "1px solid #1f2937",
-    borderRadius: "16px",
-    backgroundColor: "#081631",
-    display: "grid",
-    gridTemplateRows: "auto 1fr",
-    overflow: "hidden",
-    minHeight: 0
-  },
-  panelHeader: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    padding: "14px 16px",
-    borderBottom: "1px solid #1f2937",
-    fontWeight: 700,
-    color: "#f8fafc"
-  },
-  panelSubText: {
-    fontSize: "12px",
-    color: "#94a3b8",
-    fontWeight: 500
-  },
   stageBody: {
+    minHeight: 0,
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
-    padding: "16px",
-    minHeight: 0
+    padding: "10px",
+    overflow: "hidden"
   },
   previewStageBody: {
+    minHeight: 0,
     display: "grid",
     gridTemplateRows: "1fr auto",
-    gap: "14px",
-    padding: "16px",
-    minHeight: 0
+    gap: "10px",
+    padding: "10px",
+    overflow: "hidden"
   },
   emptyCanvas: {
     width: "100%",
     height: "100%",
-    minHeight: "680px",
+    minHeight: 0,
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
@@ -1692,7 +1734,7 @@ const styles = {
   previewEmpty: {
     width: "100%",
     height: "100%",
-    minHeight: "560px",
+    minHeight: 0,
     border: "1px dashed #334155",
     borderRadius: "14px",
     display: "flex",
@@ -1705,6 +1747,7 @@ const styles = {
   },
   previewVideoFrame: {
     width: "100%",
+    height: "100%",
     minHeight: 0,
     display: "flex",
     alignItems: "center",
@@ -1712,11 +1755,12 @@ const styles = {
     backgroundColor: "#030712",
     border: "1px solid #1f2937",
     borderRadius: "14px",
-    padding: "18px"
+    padding: "10px",
+    overflow: "hidden"
   },
   previewVideo: {
-    width: "100%",
-    maxWidth: "420px",
+    height: "100%",
+    maxHeight: "640px",
     aspectRatio: "9 / 16",
     objectFit: "cover",
     borderRadius: "12px",
@@ -1724,139 +1768,171 @@ const styles = {
     boxShadow: "0 16px 40px rgba(0,0,0,0.35)"
   },
   previewActionBar: {
+    minHeight: "118px",
     display: "flex",
+    flexDirection: "column",
     justifyContent: "center",
     alignItems: "center",
-    paddingTop: "6px"
+    gap: "7px"
+  },
+  saveMetaBox: {
+    width: "100%",
+    maxWidth: "260px",
+    display: "grid",
+    gap: "4px"
+  },
+  saveMetaLabel: {
+    color: "#94a3b8",
+    fontSize: "11px",
+    fontWeight: 700
+  },
+  saveMetaInput: {
+    width: "100%",
+    backgroundColor: "#020617",
+    color: "#e5e7eb",
+    border: "1px solid #334155",
+    borderRadius: "9px",
+    padding: "7px 10px",
+    outline: "none",
+    fontSize: "12px",
+    textAlign: "center"
   },
   subtitleListPanel: {
+    minHeight: 0,
     border: "1px solid #1f2937",
     borderRadius: "16px",
     backgroundColor: "#07122b",
     overflow: "hidden",
-    minHeight: 0,
     display: "flex",
     flexDirection: "column"
   },
   editorPanel: {
+    minHeight: 0,
     border: "1px solid #1f2937",
     borderRadius: "16px",
     backgroundColor: "#07122b",
     overflow: "hidden",
-    minHeight: 0,
     display: "flex",
     flexDirection: "column"
   },
   sideHeader: {
+    height: "58px",
+    flexShrink: 0,
     display: "flex",
     alignItems: "center",
     justifyContent: "space-between",
-    padding: "14px",
+    padding: "10px 12px",
     borderBottom: "1px solid #1f2937"
   },
   sideTitle: {
-    fontSize: "16px",
+    fontSize: "15px",
     fontWeight: 800,
     color: "#f8fafc"
   },
   sideSubTitle: {
-    marginTop: "4px",
+    marginTop: "2px",
     color: "#94a3b8",
-    fontSize: "12px"
+    fontSize: "11px"
   },
   subtitleList: {
-    padding: "12px",
+    flex: 1,
+    minHeight: 0,
+    padding: "10px",
     overflowY: "auto",
     display: "flex",
     flexDirection: "column",
-    gap: "8px"
+    gap: "7px"
   },
   subtitleItem: {
     textAlign: "left",
     color: "#e5e7eb",
     border: "1px solid #1f2937",
-    borderRadius: "12px",
-    padding: "10px",
+    borderRadius: "10px",
+    padding: "8px",
     cursor: "pointer"
   },
   subtitleItemTop: {
     display: "flex",
     justifyContent: "space-between",
     color: "#94a3b8",
-    fontSize: "11px",
-    marginBottom: "6px"
+    fontSize: "10px",
+    marginBottom: "4px"
   },
   subtitleItemText: {
-    fontSize: "13px",
-    lineHeight: "1.45",
+    fontSize: "12px",
+    lineHeight: "1.4",
     whiteSpace: "pre-wrap"
   },
   emptySideText: {
-    padding: "18px",
+    padding: "16px",
     color: "#64748b",
-    fontSize: "13px",
+    fontSize: "12px",
     lineHeight: "1.5",
     textAlign: "center"
   },
   form: {
-    padding: "14px",
+    flex: 1,
+    minHeight: 0,
+    padding: "12px",
     overflowY: "auto",
     display: "flex",
     flexDirection: "column",
-    gap: "10px"
+    gap: "9px"
   },
   formGrid: {
     display: "grid",
     gridTemplateColumns: "1fr 1fr",
-    gap: "10px"
+    gap: "8px"
   },
   label: {
     display: "block",
     color: "#94a3b8",
-    fontSize: "12px",
-    marginBottom: "5px"
+    fontSize: "11px",
+    marginBottom: "4px"
   },
   input: {
     width: "100%",
     backgroundColor: "#020617",
     color: "#e5e7eb",
     border: "1px solid #334155",
-    borderRadius: "10px",
-    padding: "9px 10px",
-    outline: "none"
+    borderRadius: "9px",
+    padding: "8px 9px",
+    outline: "none",
+    fontSize: "12px"
   },
   propertyTextarea: {
     width: "100%",
-    minHeight: "88px",
+    minHeight: "70px",
     backgroundColor: "#020617",
     color: "#e5e7eb",
     border: "1px solid #334155",
-    borderRadius: "10px",
-    padding: "10px",
+    borderRadius: "9px",
+    padding: "9px",
     resize: "vertical",
     outline: "none",
-    fontFamily: "inherit"
+    fontFamily: "inherit",
+    fontSize: "12px"
   },
   inlineRow: {
     display: "flex",
-    gap: "8px",
+    gap: "7px",
     alignItems: "center",
     flexWrap: "wrap"
   },
   primaryButton: {
     border: "none",
     borderRadius: "999px",
-    padding: "12px 18px",
+    padding: "10px 16px",
     backgroundColor: "#38bdf8",
     color: "#020617",
     fontWeight: 800,
     cursor: "pointer",
-    minWidth: "130px"
+    minWidth: "128px"
   },
   secondaryTopButton: {
     border: "1px solid #334155",
     borderRadius: "999px",
-    padding: "10px 14px",
+    padding: "9px 12px",
     backgroundColor: "#111827",
     color: "#e5e7eb",
     fontWeight: 700,
@@ -1865,51 +1941,54 @@ const styles = {
   smallButton: {
     border: "1px solid #38bdf8",
     borderRadius: "999px",
-    padding: "8px 12px",
+    padding: "7px 10px",
     backgroundColor: "transparent",
     color: "#7dd3fc",
     fontWeight: 700,
-    cursor: "pointer"
+    cursor: "pointer",
+    fontSize: "12px"
   },
   secondaryButton: {
     border: "1px solid #334155",
-    borderRadius: "10px",
-    padding: "8px 10px",
+    borderRadius: "9px",
+    padding: "7px 9px",
     backgroundColor: "#111827",
     color: "#e5e7eb",
-    cursor: "pointer"
+    cursor: "pointer",
+    fontSize: "12px"
   },
   saveButton: {
     border: "none",
     borderRadius: "12px",
-    padding: "14px 26px",
+    padding: "10px 24px",
     backgroundColor: "#22c55e",
     color: "#052e16",
     fontWeight: 900,
     cursor: "pointer",
-    minWidth: "180px",
-    fontSize: "15px"
+    minWidth: "170px",
+    fontSize: "14px"
   },
   downloadButton: {
     display: "inline-block",
     textDecoration: "none",
     borderRadius: "12px",
-    padding: "14px 26px",
+    padding: "12px 24px",
     backgroundColor: "#22c55e",
     color: "#052e16",
     fontWeight: 900,
-    minWidth: "220px",
+    minWidth: "200px",
     textAlign: "center"
   },
   dangerButton: {
-    marginTop: "6px",
+    marginTop: "4px",
     border: "1px solid #7f1d1d",
-    borderRadius: "10px",
-    padding: "10px",
+    borderRadius: "9px",
+    padding: "9px",
     backgroundColor: "#450a0a",
     color: "#fecaca",
     cursor: "pointer",
-    fontWeight: 700
+    fontWeight: 700,
+    fontSize: "12px"
   },
   colorLabel: {
     display: "flex",
@@ -1919,8 +1998,8 @@ const styles = {
     fontSize: "12px"
   },
   colorInput: {
-    width: "34px",
-    height: "34px",
+    width: "32px",
+    height: "32px",
     border: "none",
     backgroundColor: "transparent"
   },
