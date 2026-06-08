@@ -49,3 +49,6 @@ server/uploads/tmp/*
 !server/uploads/output/.gitkeep
 !server/uploads/external/.gitkeep
 !server/uploads/tmp/.gitkeep
+
+server/callback-received/*
+!server/callback-received/.gitkeep
